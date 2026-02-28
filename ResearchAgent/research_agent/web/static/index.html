@@ -7,111 +7,142 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Noto+Sans+SC:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="app-shell">
+    <div class="app-shell" id="appShell">
       <header class="app-bar">
-        <div class="brand-stack">
-          <div class="brand-dot"></div>
+        <div class="app-bar-left">
+          <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧边栏">☰</button>
+          <div class="brand-mark"></div>
           <div>
-            <div class="brand-overline">Google-like Research Workspace</div>
+            <div class="app-kicker">AI Research Workspace</div>
             <h1>ResearchAgent</h1>
           </div>
         </div>
-        <div class="app-note">面向大模型 RL 基建、论文与技术博客的本地知识库</div>
+        <div class="app-bar-right">支持 arXiv、PDF 和技术博客的本地研究阅读器</div>
       </header>
 
-      <div class="workspace">
-        <aside class="rail">
-          <section class="surface rail-panel">
+      <div class="layout">
+        <aside id="sidebar" class="sidebar">
+          <section class="panel">
             <label class="field-stack">
-              <span>搜索标题 / 摘要</span>
-              <input id="searchInput" type="search" placeholder="例如：FlashOptim / DPO / RLHF" />
+              <span>搜索</span>
+              <input id="searchInput" type="search" placeholder="搜索标题、摘要、关键词" />
             </label>
 
-            <section class="rail-group">
-              <div class="rail-title">日期归档</div>
+            <div class="filter-block">
+              <div class="block-title">日期归档</div>
               <div id="dateFilters" class="chip-list"></div>
-            </section>
+            </div>
 
-            <section class="rail-group">
-              <div class="rail-title">主题标签</div>
+            <div class="filter-block">
+              <div class="block-title">主题标签</div>
               <div id="topicFilters" class="chip-list"></div>
-            </section>
+            </div>
           </section>
 
-          <section class="surface rail-panel article-pane">
-            <div class="rail-title">文章列表</div>
+          <section class="panel list-panel">
+            <div class="list-head">
+              <div class="block-title">论文 / 文章</div>
+              <span id="articleCount" class="counter-pill">0</span>
+            </div>
             <div id="articleList" class="article-list"></div>
           </section>
         </aside>
 
         <main class="main-stage">
-          <section class="surface intake-panel">
-            <div class="intake-head">
-              <div>
-                <div class="section-overline">Manual Ingest</div>
-                <h2>直接导入新物料并交给 Gemini 解析</h2>
-                <p>支持 arXiv 链接、普通网址和本地 PDF。上传后会展示实时进度、Token 消耗和估算成本。</p>
-              </div>
+          <section class="panel intake-panel">
+            <div class="intake-copy">
+              <div class="section-kicker">Manual Ingest</div>
+              <h2>导入新材料，生成更完整的专业解读</h2>
+              <p>上传 PDF 时会显示上传进度和后台解析阶段。生成结果会包含更细的页码引用、关键图表解读和原文对照入口。</p>
             </div>
 
-            <div class="intake-grid">
+            <div class="intake-actions">
               <label class="field-stack">
-                <span>输入 arXiv 链接或技术博客网址</span>
-                <div class="input-row">
-                  <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... 或 https://company.com/blog/..." />
+                <span>arXiv 链接或技术博客网址</span>
+                <div class="url-row">
+                  <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... 或 https://..." />
                   <button id="ingestUrlButton" class="primary-button" type="button">开始解析</button>
                 </div>
               </label>
 
-              <div id="uploadDropzone" class="upload-dropzone" tabindex="0" role="button">
+              <div id="uploadDropzone" class="dropzone" tabindex="0" role="button">
                 <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
-                <div class="drop-badge">PDF Upload</div>
+                <div class="drop-kicker">PDF Upload</div>
                 <div class="drop-title">拖拽 PDF 到这里，或点击选择文件</div>
-                <div class="drop-subtitle">系统会先上传，再通过 Gemini 3 Flash Preview 做全文解析。</div>
+                <div class="drop-hint">上传后会展示进度条和 Gemini 解析阶段，避免卡住无反馈。</div>
               </div>
             </div>
 
-            <div id="ingestStatus" class="ingest-status hidden"></div>
-
+            <div id="ingestStatus" class="status-banner hidden"></div>
             <div id="progressShell" class="progress-shell hidden">
-              <div class="progress-meta">
+              <div class="progress-row">
                 <span id="progressLabel">准备中</span>
                 <span id="progressPercent">0%</span>
               </div>
-              <div class="progress-track">
-                <div id="progressFill" class="progress-fill"></div>
-              </div>
+              <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
               <div id="progressHint" class="progress-hint"></div>
             </div>
           </section>
 
-          <section class="hero-band">
-            <div class="hero-copy">
-              <div class="section-overline">Local Knowledge Base</div>
-              <h2 id="heroTitle">等待选择文章</h2>
+          <section class="hero-bar">
+            <div>
+              <div class="section-kicker">Reader Mode</div>
+              <h2 id="heroTitle">选择左侧论文开始阅读</h2>
             </div>
             <div id="metaBadges" class="badge-row"></div>
           </section>
 
-          <section id="emptyState" class="surface empty-state">
-            <h3>当前还没有选中的文章</h3>
-            <p>左侧标题列表会优先展示文章名。你可以直接点开已有内容，或用上方导入区新增论文 / 博客 / PDF。</p>
+          <section id="emptyState" class="panel empty-state">
+            <h3>还没有选中的论文</h3>
+            <p>左侧导航支持收缩。选中文章后会进入双栏模式：左侧是解析和索引，右侧是原始 PDF 对照阅读。</p>
           </section>
 
-          <article id="articleView" class="surface article-view hidden">
-            <div class="article-actions">
-              <a id="sourceLink" class="primary-button subtle hidden" target="_blank" rel="noreferrer">查看原始来源</a>
-              <div id="fileActions" class="inline-actions"></div>
-            </div>
-            <section id="summaryBlock" class="summary-block"></section>
-            <section id="articleBody" class="article-body"></section>
-          </article>
+          <section id="articleView" class="reader-shell hidden">
+            <section class="panel analysis-panel">
+              <div class="analysis-topbar">
+                <a id="sourceLink" class="secondary-button hidden" target="_blank" rel="noreferrer">查看原始来源</a>
+                <div id="fileActions" class="inline-actions"></div>
+              </div>
+
+              <div class="analysis-meta">
+                <div class="summary-stack">
+                  <div class="mini-title">摘要</div>
+                  <p id="summaryText"></p>
+                </div>
+                <div id="usageInline" class="usage-inline"></div>
+              </div>
+
+              <div class="analysis-indexes">
+                <section class="inline-panel">
+                  <div class="mini-title">解析索引</div>
+                  <div id="headingIndex" class="heading-index"></div>
+                </section>
+                <section class="inline-panel">
+                  <div class="mini-title">原文页码跳转</div>
+                  <div id="pdfPageRefs" class="page-ref-list"></div>
+                </section>
+              </div>
+
+              <article id="articleBody" class="article-body"></article>
+            </section>
+
+            <aside id="pdfPane" class="panel pdf-panel">
+              <div class="pdf-pane-head">
+                <div>
+                  <div class="mini-title">原始 PDF 对照</div>
+                  <div id="pdfCaption" class="pdf-caption">支持根据页码引用跳转</div>
+                </div>
+              </div>
+              <iframe id="pdfViewer" name="pdf-viewer" class="pdf-frame" title="原始 PDF 对照窗口"></iframe>
+              <div id="pdfEmpty" class="pdf-empty hidden">当前文章没有可用的 PDF 源文件。</div>
+            </aside>
+          </section>
         </main>
       </div>
     </div>

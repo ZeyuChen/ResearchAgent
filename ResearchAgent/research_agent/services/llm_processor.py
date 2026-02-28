@@ -84,12 +84,13 @@ class LLMProcessor:
         response = self.client.models.generate_content(
             model=self.settings.gemini_model,
             contents=[
-                "请深度阅读这份 PDF，并输出符合系统要求的 Markdown 解析文章。",
+                "请深度阅读这份 PDF。输出更完整、更详细的 Markdown 解析文章，务必覆盖数据、算法、工程三条主线，并尽量给出关键图表 / 表格 / 公式对应的页码标记，例如 [P12]。",
                 uploaded_file,
             ],
             config=types.GenerateContentConfig(
                 system_instruction=self.system_prompt,
                 temperature=0.4,
+                max_output_tokens=8192,
             ),
         )
         usage = self._extract_usage(response)
@@ -128,6 +129,7 @@ class LLMProcessor:
             config=types.GenerateContentConfig(
                 system_instruction=self.system_prompt,
                 temperature=0.4,
+                max_output_tokens=8192,
             ),
         )
         usage = self._extract_usage(response)

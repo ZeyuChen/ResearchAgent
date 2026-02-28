@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from research_agent.config import Settings
 from research_agent.services.job_manager import JobManager
 from research_agent.services.llm_processor import LLMProcessor
-from research_agent.services.markdown_renderer import render_markdown
+from research_agent.services.markdown_renderer import extract_pdf_page_refs, inject_pdf_page_links, render_markdown
 from research_agent.services.manual_ingest import ManualIngestService
 from research_agent.services.storage_manager import StorageManager
 
@@ -54,10 +54,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
             for entry in article.get("source_files", [])
         ]
+        pdf_source = next((entry["url"] for entry in source_files if entry.get("name") == "source.pdf"), "")
+        rendered_html = render_markdown(article.get("markdown", ""))
+        rendered_html = inject_pdf_page_links(rendered_html, pdf_source or None)
         return {
             **article,
             "source_files": source_files,
-            "rendered_html": render_markdown(article.get("markdown", "")),
+            "pdf_source_url": pdf_source,
+            "pdf_page_refs": extract_pdf_page_refs(article.get("markdown", "")),
+            "rendered_html": rendered_html,
         }
 
     @app.get("/api/library")
