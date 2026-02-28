@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from collections import Counter
+import threading
 from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from research_agent.config import Settings
+from research_agent.services.job_manager import JobManager
 from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import render_markdown
 from research_agent.services.manual_ingest import ManualIngestService
@@ -25,6 +26,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     storage_manager = StorageManager(app_settings.data_dir)
     llm_processor = LLMProcessor(app_settings)
     manual_ingest = ManualIngestService(app_settings, storage_manager, llm_processor)
+    job_manager = JobManager()
     static_dir = app_settings.project_root / "research_agent" / "web" / "static"
 
     app = FastAPI(
@@ -78,15 +80,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Article not found")
         return build_article_payload(article)
 
+    def start_job(job_kind: str, worker, filename: str = "") -> dict:
+        job = job_manager.create_job(job_kind, filename=filename)
+
+        def run() -> None:
+            try:
+                job_manager.update(job.job_id, status="running", progress=3, message="任务已开始。")
+                article = worker(
+                    lambda progress, message: job_manager.update(
+                        job.job_id,
+                        status="running",
+                        progress=progress,
+                        message=message,
+                    )
+                )
+                job_manager.complete(job.job_id, build_article_payload(article))
+            except Exception as exc:
+                job_manager.fail(job.job_id, str(exc))
+
+        threading.Thread(target=run, daemon=True).start()
+        return {
+            "job_id": job.job_id,
+            "status": job.status,
+            "progress": job.progress,
+            "message": job.message,
+        }
+
     @app.post("/api/ingest/url")
     async def ingest_url(payload: URLIngestRequest) -> dict:
-        try:
-            article = await run_in_threadpool(manual_ingest.ingest_url, payload.url)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to ingest URL: {exc}") from exc
-        return build_article_payload(article)
+        if not payload.url.strip():
+            raise HTTPException(status_code=400, detail="URL cannot be empty")
+        return start_job(
+            "url",
+            lambda progress_callback: manual_ingest.ingest_url(payload.url, progress_callback=progress_callback),
+        )
 
     @app.post("/api/ingest/pdf")
     async def ingest_pdf(file: Annotated[UploadFile, File(...)]) -> dict:
@@ -96,11 +123,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = await file.read()
         if not payload:
             raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
-        try:
-            article = await run_in_threadpool(manual_ingest.ingest_pdf, filename, payload)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Failed to ingest PDF: {exc}") from exc
-        return build_article_payload(article)
+        return start_job(
+            "pdf",
+            lambda progress_callback: manual_ingest.ingest_pdf(filename, payload, progress_callback=progress_callback),
+            filename=filename,
+        )
+
+    @app.get("/api/ingest/jobs/{job_id}")
+    async def ingest_job(job_id: str) -> dict:
+        job = job_manager.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job
 
     return app
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Callable
 
 from google import genai
 from google.genai import types
@@ -11,6 +12,10 @@ from research_agent.models import ResearchItem, StoredItem
 
 
 LOGGER = logging.getLogger(__name__)
+GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M = 0.50
+GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M = 3.00
+GEMINI_3_FLASH_PRICING_URL = "https://ai.google.dev/pricing"
+ProgressCallback = Callable[[int, str], None]
 
 
 class LLMProcessor:
@@ -40,27 +45,42 @@ class LLMProcessor:
         return answer.startswith("YES")
 
     def generate_article(self, stored_item: StoredItem) -> str:
+        article, _ = self.generate_article_with_metrics(stored_item)
+        return article
+
+    def generate_article_with_metrics(
+        self,
+        stored_item: StoredItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
         if not self.client:
-            return self._fallback_article(stored_item.item)
+            return self._fallback_article(stored_item.item), self._empty_usage()
 
         pdf_path = stored_item.source_files.get("source.pdf")
         if pdf_path and pdf_path.exists():
             try:
-                return self._generate_from_pdf(pdf_path, stored_item.item)
+                return self._generate_from_pdf(pdf_path, stored_item.item, progress_callback=progress_callback)
             except Exception as exc:
                 LOGGER.warning("Gemini PDF generation failed for %s: %s", stored_item.item.title, exc)
 
         html_path = stored_item.source_files.get("source.html")
         if html_path and html_path.exists():
             try:
-                return self._generate_from_html(html_path, stored_item.item)
+                return self._generate_from_html(html_path, stored_item.item, progress_callback=progress_callback)
             except Exception as exc:
                 LOGGER.warning("Gemini HTML generation failed for %s: %s", stored_item.item.title, exc)
 
-        return self._fallback_article(stored_item.item)
+        return self._fallback_article(stored_item.item), self._empty_usage()
 
-    def _generate_from_pdf(self, pdf_path: Path, item: ResearchItem) -> str:
+    def _generate_from_pdf(
+        self,
+        pdf_path: Path,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
+        self._notify(progress_callback, 52, "正在上传 PDF 到 Gemini File API。")
         uploaded_file = self.client.files.upload(file=str(pdf_path))
+        self._notify(progress_callback, 72, "PDF 已上传，Gemini 正在深度阅读并生成解析。")
         response = self.client.models.generate_content(
             model=self.settings.gemini_model,
             contents=[
@@ -72,9 +92,15 @@ class LLMProcessor:
                 temperature=0.4,
             ),
         )
-        return (response.text or "").strip() or self._fallback_article(item)
+        usage = self._extract_usage(response)
+        return (response.text or "").strip() or self._fallback_article(item), usage
 
-    def _generate_from_html(self, html_path: Path, item: ResearchItem) -> str:
+    def _generate_from_html(
+        self,
+        html_path: Path,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
         html_text = html_path.read_text(encoding="utf-8", errors="ignore")
         text_path = html_path.with_name("source.txt")
         text_excerpt = ""
@@ -92,8 +118,10 @@ class LLMProcessor:
             )
         ]
         for image_path in self._collect_visual_assets(html_path.parent):
+            self._notify(progress_callback, 60, "正在上传网页截图与图片素材到 Gemini。")
             content_parts.append(self.client.files.upload(file=str(image_path)))
 
+        self._notify(progress_callback, 74, "网页内容已就绪，Gemini 正在生成详细解读。")
         response = self.client.models.generate_content(
             model=self.settings.gemini_model,
             contents=content_parts,
@@ -102,7 +130,8 @@ class LLMProcessor:
                 temperature=0.4,
             ),
         )
-        return (response.text or "").strip() or self._fallback_article(item)
+        usage = self._extract_usage(response)
+        return (response.text or "").strip() or self._fallback_article(item), usage
 
     @staticmethod
     def _collect_visual_assets(item_dir: Path) -> list[Path]:
@@ -146,3 +175,41 @@ class LLMProcessor:
 
 该条目已通过关键词初筛，建议在配置 `GEMINI_API_KEY` 后执行完整的全文解读流程，以获得更高质量的专家分析。
 """
+
+    def _extract_usage(self, response: types.GenerateContentResponse) -> dict:
+        usage = response.usage_metadata
+        prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+        output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+        total_tokens = int(getattr(usage, "total_token_count", prompt_tokens + output_tokens) or 0)
+        input_cost = prompt_tokens / 1_000_000 * GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M
+        output_cost = output_tokens / 1_000_000 * GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M
+        return {
+            "model": self.settings.gemini_model,
+            "prompt_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "input_cost_usd": round(input_cost, 6),
+            "output_cost_usd": round(output_cost, 6),
+            "estimated_cost_usd": round(input_cost + output_cost, 6),
+            "pricing_basis": "Google AI Studio Gemini 3 Flash Preview standard pricing (text/image/video input, text output)",
+            "pricing_reference_url": GEMINI_3_FLASH_PRICING_URL,
+        }
+
+    @staticmethod
+    def _empty_usage() -> dict:
+        return {
+            "model": "",
+            "prompt_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost_usd": 0.0,
+            "output_cost_usd": 0.0,
+            "estimated_cost_usd": 0.0,
+            "pricing_basis": "",
+            "pricing_reference_url": GEMINI_3_FLASH_PRICING_URL,
+        }
+
+    @staticmethod
+    def _notify(progress_callback: ProgressCallback | None, progress: int, message: str) -> None:
+        if progress_callback:
+            progress_callback(progress, message)

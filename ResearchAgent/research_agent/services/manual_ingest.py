@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ from research_agent.services.webpage_capture import WebPageCaptureService
 LOGGER = logging.getLogger(__name__)
 
 ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}(?:v\d+)?)")
+ProgressCallback = Callable[[int, str], None]
 
 
 class ManualIngestService:
@@ -42,18 +44,25 @@ class ManualIngestService:
         )
         self.page_capture = WebPageCaptureService(self.session)
 
-    def ingest_url(self, url: str) -> dict:
+    def ingest_url(self, url: str, progress_callback: ProgressCallback | None = None) -> dict:
         normalized_url = url.strip()
         if not normalized_url:
             raise ValueError("URL cannot be empty")
 
+        self._notify(progress_callback, 8, "已收到链接，正在识别内容类型。")
         arxiv_id = self.extract_arxiv_id(normalized_url)
         if arxiv_id:
-            return self._ingest_arxiv(arxiv_id)
-        return self._ingest_webpage(normalized_url)
+            return self._ingest_arxiv(arxiv_id, progress_callback=progress_callback)
+        return self._ingest_webpage(normalized_url, progress_callback=progress_callback)
 
-    def ingest_pdf(self, filename: str, payload: bytes) -> dict:
+    def ingest_pdf(
+        self,
+        filename: str,
+        payload: bytes,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict:
         safe_name = Path(filename or "uploaded-document.pdf").name
+        self._notify(progress_callback, 10, "上传完成，正在建立本地归档目录。")
         item = ResearchItem(
             source="upload",
             title=Path(safe_name).stem.replace("_", " ").replace("-", " ").strip() or "Uploaded PDF",
@@ -65,14 +74,29 @@ class ManualIngestService:
             meta={"upload_filename": safe_name},
         )
         stored_item = self.storage_manager.persist_item(item, {"source.pdf": payload})
-        article = self.llm_processor.generate_article(stored_item)
+        self._notify(progress_callback, 28, "PDF 已归档，准备调用 Gemini 解析。")
+        article, usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
         self.storage_manager.write_article(stored_item, article)
+        self.storage_manager.update_metadata(
+            stored_item.metadata_path,
+            {
+                "llm_usage": usage,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        self._notify(progress_callback, 96, "解析完成，正在整理输出结果。")
         return self._build_article_response(stored_item.metadata_path)
 
-    def _ingest_arxiv(self, arxiv_id: str) -> dict:
+    def _ingest_arxiv(
+        self,
+        arxiv_id: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict:
+        self._notify(progress_callback, 14, "已识别为 arXiv 链接，正在拉取论文元数据。")
         metadata = self._fetch_arxiv_metadata(arxiv_id)
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         abs_url = f"https://arxiv.org/abs/{arxiv_id}"
+        self._notify(progress_callback, 26, "正在下载 arXiv PDF 与摘要页面。")
         source_files = {
             "source.pdf": self._download_binary(pdf_url),
             "source.html": self._download_text(abs_url).encode("utf-8"),
@@ -90,11 +114,25 @@ class ManualIngestService:
             tags=["manual-upload", "arxiv", *metadata["tags"]],
         )
         stored_item = self.storage_manager.persist_item(item, source_files)
-        article = self.llm_processor.generate_article(stored_item)
+        self._notify(progress_callback, 36, "论文已归档，准备进入 Gemini 全文阅读。")
+        article, usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
         self.storage_manager.write_article(stored_item, article)
+        self.storage_manager.update_metadata(
+            stored_item.metadata_path,
+            {
+                "llm_usage": usage,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        self._notify(progress_callback, 96, "arXiv 论文解析完成，正在生成展示数据。")
         return self._build_article_response(stored_item.metadata_path)
 
-    def _ingest_webpage(self, url: str) -> dict:
+    def _ingest_webpage(
+        self,
+        url: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict:
+        self._notify(progress_callback, 14, "正在加载网页，优先尝试浏览器渲染动态内容。")
         captured = self.page_capture.capture(url)
         summary = captured.text[:500].strip() or f"网页内容：{captured.final_url}"
         item = ResearchItem(
@@ -112,8 +150,17 @@ class ManualIngestService:
             },
         )
         stored_item = self.storage_manager.persist_item(item, captured.source_files)
-        article = self.llm_processor.generate_article(stored_item)
+        self._notify(progress_callback, 34, "网页素材已归档，准备调用 Gemini 进行多模态解读。")
+        article, usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
         self.storage_manager.write_article(stored_item, article)
+        self.storage_manager.update_metadata(
+            stored_item.metadata_path,
+            {
+                "llm_usage": usage,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+        self._notify(progress_callback, 96, "网页解析完成，正在生成展示数据。")
         return self._build_article_response(stored_item.metadata_path)
 
     def _fetch_arxiv_metadata(self, arxiv_id: str) -> dict:
@@ -166,3 +213,8 @@ class ManualIngestService:
     @staticmethod
     def _clean_text(value: str) -> str:
         return re.sub(r"\s+", " ", value).strip()
+
+    @staticmethod
+    def _notify(progress_callback: ProgressCallback | None, progress: int, message: str) -> None:
+        if progress_callback:
+            progress_callback(progress, message)

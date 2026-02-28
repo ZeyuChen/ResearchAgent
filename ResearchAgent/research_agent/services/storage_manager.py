@@ -47,11 +47,20 @@ class StorageManager:
 
     def write_article(self, stored_item: StoredItem, markdown_text: str) -> Path:
         stored_item.article_path.write_text(markdown_text, encoding="utf-8")
-        metadata = self._read_metadata(stored_item.metadata_path)
-        metadata["article_path"] = stored_item.article_path.relative_to(self.data_dir).as_posix()
-        metadata["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        stored_item.metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.update_metadata(
+            stored_item.metadata_path,
+            {
+                "article_path": stored_item.article_path.relative_to(self.data_dir).as_posix(),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
         return stored_item.article_path
+
+    def update_metadata(self, metadata_path: Path, updates: dict) -> dict:
+        metadata = self._read_metadata(metadata_path)
+        metadata.update(updates)
+        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        return metadata
 
     def scan_library(self) -> list[dict]:
         items: list[dict] = []

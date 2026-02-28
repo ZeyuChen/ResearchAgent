@@ -44,11 +44,17 @@ class ResearchPipeline:
             try:
                 source_files = self.data_fetcher.download_source_files(item)
                 stored_item = self.storage_manager.persist_item(item, source_files)
-                article = self.llm_processor.generate_article(stored_item)
+                article, usage = self.llm_processor.generate_article_with_metrics(stored_item)
                 self.storage_manager.write_article(stored_item, article)
+                metadata = self.storage_manager.update_metadata(
+                    stored_item.metadata_path,
+                    {
+                        "llm_usage": usage,
+                    },
+                )
                 processed.append(
                     {
-                        "article_id": stored_item.item_dir.name,
+                        "article_id": metadata["article_id"],
                         "title": item.title,
                         "path": stored_item.item_dir.as_posix(),
                         "source": item.source,

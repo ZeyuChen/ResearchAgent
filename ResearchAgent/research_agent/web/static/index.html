@@ -7,92 +7,113 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="layout">
-      <aside class="drawer">
-        <div class="brand-card">
-          <div class="brand-mark">R</div>
+    <div class="app-shell">
+      <header class="app-bar">
+        <div class="brand-stack">
+          <div class="brand-dot"></div>
           <div>
+            <div class="brand-overline">Google-like Research Workspace</div>
             <h1>ResearchAgent</h1>
-            <p>LLM RL 研究知识库</p>
           </div>
         </div>
+        <div class="app-note">面向大模型 RL 基建、论文与技术博客的本地知识库</div>
+      </header>
 
-        <label class="search-shell">
-          <span>搜索标题 / 摘要</span>
-          <input id="searchInput" type="search" placeholder="例如：DPO / vLLM / Distributed Training" />
-        </label>
-
-        <section class="sidebar-group">
-          <div class="group-title">日期归档</div>
-          <div id="dateFilters" class="chip-list"></div>
-        </section>
-
-        <section class="sidebar-group">
-          <div class="group-title">主题标签</div>
-          <div id="topicFilters" class="chip-list"></div>
-        </section>
-
-        <section class="sidebar-group">
-          <div class="group-title">文章列表</div>
-          <div id="articleList" class="article-list"></div>
-        </section>
-      </aside>
-
-      <main class="content-area">
-        <section class="surface intake-panel">
-          <div class="intake-copy">
-            <div class="eyebrow">Manual Intake</div>
-            <h3>手动导入新物料</h3>
-            <p>支持 arXiv 链接、普通技术博客网址，或直接拖拽上传 PDF。导入后会自动调用 Gemini 3 Flash 完成深读与解析。</p>
-          </div>
-
-          <div class="intake-controls">
-            <label class="search-shell intake-url-shell">
-              <span>输入 arXiv 链接或技术博客网址</span>
-              <div class="input-row">
-                <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... 或 https://company.com/blog/..." />
-                <button id="ingestUrlButton" class="action-button" type="button">开始解析</button>
-              </div>
+      <div class="workspace">
+        <aside class="rail">
+          <section class="surface rail-panel">
+            <label class="field-stack">
+              <span>搜索标题 / 摘要</span>
+              <input id="searchInput" type="search" placeholder="例如：FlashOptim / DPO / RLHF" />
             </label>
 
-            <div id="uploadDropzone" class="upload-dropzone" tabindex="0" role="button">
-              <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
-              <div class="drop-title">拖拽 PDF 到这里</div>
-              <div class="drop-subtitle">或点击选择本地 PDF 文件并上传到后端解析</div>
+            <section class="rail-group">
+              <div class="rail-title">日期归档</div>
+              <div id="dateFilters" class="chip-list"></div>
+            </section>
+
+            <section class="rail-group">
+              <div class="rail-title">主题标签</div>
+              <div id="topicFilters" class="chip-list"></div>
+            </section>
+          </section>
+
+          <section class="surface rail-panel article-pane">
+            <div class="rail-title">文章列表</div>
+            <div id="articleList" class="article-list"></div>
+          </section>
+        </aside>
+
+        <main class="main-stage">
+          <section class="surface intake-panel">
+            <div class="intake-head">
+              <div>
+                <div class="section-overline">Manual Ingest</div>
+                <h2>直接导入新物料并交给 Gemini 解析</h2>
+                <p>支持 arXiv 链接、普通网址和本地 PDF。上传后会展示实时进度、Token 消耗和估算成本。</p>
+              </div>
+            </div>
+
+            <div class="intake-grid">
+              <label class="field-stack">
+                <span>输入 arXiv 链接或技术博客网址</span>
+                <div class="input-row">
+                  <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... 或 https://company.com/blog/..." />
+                  <button id="ingestUrlButton" class="primary-button" type="button">开始解析</button>
+                </div>
+              </label>
+
+              <div id="uploadDropzone" class="upload-dropzone" tabindex="0" role="button">
+                <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
+                <div class="drop-badge">PDF Upload</div>
+                <div class="drop-title">拖拽 PDF 到这里，或点击选择文件</div>
+                <div class="drop-subtitle">系统会先上传，再通过 Gemini 3 Flash Preview 做全文解析。</div>
+              </div>
             </div>
 
             <div id="ingestStatus" class="ingest-status hidden"></div>
-          </div>
-        </section>
 
-        <header class="top-bar">
-          <div>
-            <div class="eyebrow">Local Knowledge Base</div>
-            <h2 id="heroTitle">等待选择文章</h2>
-          </div>
-          <div id="metaBadges" class="badge-row"></div>
-        </header>
+            <div id="progressShell" class="progress-shell hidden">
+              <div class="progress-meta">
+                <span id="progressLabel">准备中</span>
+                <span id="progressPercent">0%</span>
+              </div>
+              <div class="progress-track">
+                <div id="progressFill" class="progress-fill"></div>
+              </div>
+              <div id="progressHint" class="progress-hint"></div>
+            </div>
+          </section>
 
-        <section id="emptyState" class="surface empty-state">
-          <h3>当前还没有选中的文章</h3>
-          <p>左侧会按日期、主题和标题组织已归档内容。点击任意条目即可阅读 Markdown 解析与原始文件。</p>
-        </section>
+          <section class="hero-band">
+            <div class="hero-copy">
+              <div class="section-overline">Local Knowledge Base</div>
+              <h2 id="heroTitle">等待选择文章</h2>
+            </div>
+            <div id="metaBadges" class="badge-row"></div>
+          </section>
 
-        <article id="articleView" class="surface article-view hidden">
-          <div class="article-actions">
-            <a id="sourceLink" class="action-button hidden" target="_blank" rel="noreferrer">查看原始来源</a>
-            <div id="fileActions" class="inline-actions"></div>
-          </div>
-          <section id="summaryBlock" class="summary-block"></section>
-          <section id="articleBody" class="article-body"></section>
-        </article>
-      </main>
+          <section id="emptyState" class="surface empty-state">
+            <h3>当前还没有选中的文章</h3>
+            <p>左侧标题列表会优先展示文章名。你可以直接点开已有内容，或用上方导入区新增论文 / 博客 / PDF。</p>
+          </section>
+
+          <article id="articleView" class="surface article-view hidden">
+            <div class="article-actions">
+              <a id="sourceLink" class="primary-button subtle hidden" target="_blank" rel="noreferrer">查看原始来源</a>
+              <div id="fileActions" class="inline-actions"></div>
+            </div>
+            <section id="summaryBlock" class="summary-block"></section>
+            <section id="articleBody" class="article-body"></section>
+          </article>
+        </main>
+      </div>
     </div>
 
     <script src="/static/app.js"></script>
