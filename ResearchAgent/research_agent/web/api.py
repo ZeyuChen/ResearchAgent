@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 from collections import Counter
-from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from research_agent.config import Settings
+from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import render_markdown
+from research_agent.services.manual_ingest import ManualIngestService
 from research_agent.services.storage_manager import StorageManager
+
+
+class URLIngestRequest(BaseModel):
+    url: str
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or Settings.from_env()
     storage_manager = StorageManager(app_settings.data_dir)
+    llm_processor = LLMProcessor(app_settings)
+    manual_ingest = ManualIngestService(app_settings, storage_manager, llm_processor)
     static_dir = app_settings.project_root / "research_agent" / "web" / "static"
 
     app = FastAPI(
@@ -34,6 +44,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    def build_article_payload(article: dict) -> dict:
+        source_files = [
+            {
+                **entry,
+                "url": f"/files/{entry['path']}",
+            }
+            for entry in article.get("source_files", [])
+        ]
+        return {
+            **article,
+            "source_files": source_files,
+            "rendered_html": render_markdown(article.get("markdown", "")),
+        }
+
     @app.get("/api/library")
     async def library() -> dict:
         articles = storage_manager.scan_library()
@@ -52,18 +76,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         article = storage_manager.load_article(article_id)
         if not article:
             raise HTTPException(status_code=404, detail="Article not found")
-        source_files = [
-            {
-                **entry,
-                "url": f"/files/{entry['path']}",
-            }
-            for entry in article.get("source_files", [])
-        ]
-        return {
-            **article,
-            "source_files": source_files,
-            "rendered_html": render_markdown(article.get("markdown", "")),
-        }
+        return build_article_payload(article)
+
+    @app.post("/api/ingest/url")
+    async def ingest_url(payload: URLIngestRequest) -> dict:
+        try:
+            article = await run_in_threadpool(manual_ingest.ingest_url, payload.url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to ingest URL: {exc}") from exc
+        return build_article_payload(article)
+
+    @app.post("/api/ingest/pdf")
+    async def ingest_pdf(file: Annotated[UploadFile, File(...)]) -> dict:
+        filename = file.filename or "uploaded-document.pdf"
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
+        payload = await file.read()
+        if not payload:
+            raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
+        try:
+            article = await run_in_threadpool(manual_ingest.ingest_pdf, filename, payload)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to ingest PDF: {exc}") from exc
+        return build_article_payload(article)
 
     return app
 

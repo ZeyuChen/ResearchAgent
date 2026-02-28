@@ -207,6 +207,42 @@ a {
   min-width: 0;
 }
 
+.intake-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.intake-panel h3 {
+  margin: 6px 0 8px;
+}
+
+.intake-copy p {
+  margin: 0;
+  line-height: 1.8;
+  color: var(--muted);
+}
+
+.intake-controls {
+  display: grid;
+  gap: 16px;
+}
+
+.intake-url-shell {
+  gap: 10px;
+}
+
+.input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.input-row input {
+  min-width: 0;
+}
+
 .top-bar {
   display: flex;
   flex-wrap: wrap;
@@ -245,11 +281,72 @@ a {
   text-decoration: none;
   background: var(--brand);
   color: #fff;
+  cursor: pointer;
+}
+
+.action-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 .action-button.subtle {
   background: rgba(20, 34, 57, 0.06);
   color: var(--text);
+}
+
+.upload-dropzone {
+  border: 1.5px dashed rgba(26, 115, 232, 0.22);
+  border-radius: 22px;
+  padding: 22px;
+  background:
+    linear-gradient(135deg, rgba(26, 115, 232, 0.05), rgba(52, 168, 83, 0.04)),
+    rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  transition: border-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.upload-dropzone:hover,
+.upload-dropzone.dragover {
+  border-color: rgba(26, 115, 232, 0.42);
+  transform: translateY(-1px);
+  box-shadow: 0 12px 26px rgba(26, 115, 232, 0.08);
+}
+
+.upload-dropzone.disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.drop-title {
+  font-weight: 700;
+}
+
+.drop-subtitle {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.ingest-status {
+  border-radius: 18px;
+  padding: 12px 14px;
+  font-size: 0.94rem;
+  line-height: 1.6;
+}
+
+.ingest-status.pending {
+  background: rgba(26, 115, 232, 0.08);
+  color: var(--brand);
+}
+
+.ingest-status.success {
+  background: rgba(15, 157, 88, 0.1);
+  color: #0f8b4c;
+}
+
+.ingest-status.error {
+  background: rgba(217, 48, 37, 0.1);
+  color: #b3261e;
 }
 
 .summary-block {
@@ -323,6 +420,11 @@ a {
 
 @media (max-width: 1080px) {
   .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .intake-panel,
+  .input-row {
     grid-template-columns: 1fr;
   }
 

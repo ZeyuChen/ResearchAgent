@@ -76,22 +76,44 @@ class LLMProcessor:
 
     def _generate_from_html(self, html_path: Path, item: ResearchItem) -> str:
         html_text = html_path.read_text(encoding="utf-8", errors="ignore")
-        content_excerpt = html_text[:40000]
-        response = self.client.models.generate_content(
-            model=self.settings.gemini_model,
-            contents=(
-                "下面是技术报告或发布说明的 HTML 原文片段。"
-                "请提炼为一篇高质量 Markdown 技术解析文章。\n\n"
+        text_path = html_path.with_name("source.txt")
+        text_excerpt = ""
+        if text_path.exists():
+            text_excerpt = text_path.read_text(encoding="utf-8", errors="ignore")[:50000]
+
+        content_parts: list[object] = [
+            (
+                "下面是技术报告、博客或网页的渲染后内容。"
+                "请基于网页文字、截图和图片素材，输出一篇高质量 Markdown 技术解析文章。\n\n"
                 f"标题：{item.title}\n"
                 f"来源：{item.source_url}\n"
-                f"正文片段：\n{content_excerpt}"
-            ),
+                f"文本抽取：\n{text_excerpt}\n\n"
+                f"HTML 片段：\n{html_text[:40000]}"
+            )
+        ]
+        for image_path in self._collect_visual_assets(html_path.parent):
+            content_parts.append(self.client.files.upload(file=str(image_path)))
+
+        response = self.client.models.generate_content(
+            model=self.settings.gemini_model,
+            contents=content_parts,
             config=types.GenerateContentConfig(
                 system_instruction=self.system_prompt,
                 temperature=0.4,
             ),
         )
         return (response.text or "").strip() or self._fallback_article(item)
+
+    @staticmethod
+    def _collect_visual_assets(item_dir: Path) -> list[Path]:
+        visual_assets: list[Path] = []
+        for path in sorted(item_dir.iterdir()):
+            if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+                continue
+            visual_assets.append(path)
+            if len(visual_assets) >= 4:
+                break
+        return visual_assets
 
     @staticmethod
     def _fallback_article(item: ResearchItem) -> str:

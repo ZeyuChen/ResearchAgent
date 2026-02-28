@@ -8,6 +8,7 @@
 python3.11 -m venv venv
 source venv/bin/activate
 pip install -r ResearchAgent/requirements.txt
+playwright install chromium
 ```
 
 可选脚本：

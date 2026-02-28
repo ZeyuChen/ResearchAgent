@@ -45,6 +45,32 @@
       </aside>
 
       <main class="content-area">
+        <section class="surface intake-panel">
+          <div class="intake-copy">
+            <div class="eyebrow">Manual Intake</div>
+            <h3>手动导入新物料</h3>
+            <p>支持 arXiv 链接、普通技术博客网址，或直接拖拽上传 PDF。导入后会自动调用 Gemini 3 Flash 完成深读与解析。</p>
+          </div>
+
+          <div class="intake-controls">
+            <label class="search-shell intake-url-shell">
+              <span>输入 arXiv 链接或技术博客网址</span>
+              <div class="input-row">
+                <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... 或 https://company.com/blog/..." />
+                <button id="ingestUrlButton" class="action-button" type="button">开始解析</button>
+              </div>
+            </label>
+
+            <div id="uploadDropzone" class="upload-dropzone" tabindex="0" role="button">
+              <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
+              <div class="drop-title">拖拽 PDF 到这里</div>
+              <div class="drop-subtitle">或点击选择本地 PDF 文件并上传到后端解析</div>
+            </div>
+
+            <div id="ingestStatus" class="ingest-status hidden"></div>
+          </div>
+        </section>
+
         <header class="top-bar">
           <div>
             <div class="eyebrow">Local Knowledge Base</div>
