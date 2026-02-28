@@ -84,7 +84,7 @@ class LLMProcessor:
         response = self.client.models.generate_content(
             model=self.settings.gemini_model,
             contents=[
-                "请深度阅读这份 PDF。输出更完整、更详细的 Markdown 解析文章，务必覆盖数据、算法、工程三条主线，并尽量给出关键图表 / 表格 / 公式对应的页码标记，例如 [P12]。",
+                "请深度阅读这份 PDF。输出更完整、更详细的 Markdown 解析文章，务必覆盖数据、算法、工程三条主线，并且对工程 / Infra 技术点用编号列表逐条拆解。请尽量给出关键图表 / 表格 / 公式对应的页码标记，例如 [P12]。",
                 uploaded_file,
             ],
             config=types.GenerateContentConfig(
@@ -111,7 +111,8 @@ class LLMProcessor:
         content_parts: list[object] = [
             (
                 "下面是技术报告、博客或网页的渲染后内容。"
-                "请基于网页文字、截图和图片素材，输出一篇高质量 Markdown 技术解析文章。\n\n"
+                "请基于网页文字、截图和图片素材，输出一篇高质量 Markdown 技术解析文章。"
+                "需要兼顾数据、算法、工程三条主线，并对工程 / Infra 技术点逐条拆解。\n\n"
                 f"标题：{item.title}\n"
                 f"来源：{item.source_url}\n"
                 f"文本抽取：\n{text_excerpt}\n\n"

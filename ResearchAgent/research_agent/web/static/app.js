@@ -9,6 +9,7 @@ const state = {
   activeJobId: null,
   activeJobStartedAt: 0,
   sidebarCollapsed: false,
+  viewMode: "both",
 };
 
 const nodes = {
@@ -23,6 +24,7 @@ const nodes = {
   articleView: document.getElementById("articleView"),
   heroTitle: document.getElementById("heroTitle"),
   metaBadges: document.getElementById("metaBadges"),
+  viewToggle: document.getElementById("viewToggle"),
   summaryText: document.getElementById("summaryText"),
   usageInline: document.getElementById("usageInline"),
   articleBody: document.getElementById("articleBody"),
@@ -30,6 +32,8 @@ const nodes = {
   sourceLink: document.getElementById("sourceLink"),
   headingIndex: document.getElementById("headingIndex"),
   pdfPageRefs: document.getElementById("pdfPageRefs"),
+  previewStrip: document.getElementById("previewStrip"),
+  pdfPreviewGallery: document.getElementById("pdfPreviewGallery"),
   pdfPane: document.getElementById("pdfPane"),
   pdfViewer: document.getElementById("pdfViewer"),
   pdfEmpty: document.getElementById("pdfEmpty"),
@@ -171,11 +175,13 @@ function renderArticle(article) {
   renderMetaBadges(article);
   renderFileActions(article);
   renderUsageInline(article.llm_usage || {});
+  applyViewMode();
 
   nodes.summaryText.textContent = article.summary || "暂无摘要。";
   nodes.articleBody.innerHTML = article.rendered_html || "<p>暂无正文。</p>";
   renderHeadingIndex();
   renderPdfPane(article);
+  renderPdfPreviewGallery(article);
 }
 
 function renderMetaBadges(article) {
@@ -266,7 +272,7 @@ function renderPdfPane(article) {
 
   nodes.pdfViewer.classList.remove("hidden");
   nodes.pdfEmpty.classList.add("hidden");
-  nodes.pdfViewer.src = `${pdfUrl}#page=1`;
+  nodes.pdfViewer.src = buildPdfViewerUrl(pdfUrl, 1);
   nodes.pdfCaption.textContent = pageRefs.length
     ? "点击下方页码可直接跳转原始 PDF 对应位置。"
     : "当前解析暂未产出页码引用，可直接在右侧原文中对照阅读。";
@@ -297,10 +303,38 @@ function renderPdfPane(article) {
 }
 
 function openPdfAt(pdfUrl, page) {
-  nodes.pdfViewer.src = `${pdfUrl}#page=${page}`;
+  const targetUrl = buildPdfViewerUrl(pdfUrl, page);
+  nodes.pdfViewer.src = "about:blank";
+  window.setTimeout(() => {
+    nodes.pdfViewer.src = targetUrl;
+  }, 20);
   if (window.innerWidth < 1180) {
     nodes.pdfPane.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+}
+
+function renderPdfPreviewGallery(article) {
+  const previews = article.pdf_previews || [];
+  const pdfUrl = article.pdf_source_url || "";
+  nodes.pdfPreviewGallery.innerHTML = "";
+
+  if (!previews.length || !pdfUrl) {
+    nodes.previewStrip.classList.add("hidden");
+    return;
+  }
+
+  nodes.previewStrip.classList.remove("hidden");
+  previews.forEach((preview) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "preview-card";
+    button.innerHTML = `
+      <img src="${escapeHtml(preview.url)}" alt="PDF page ${preview.page}" />
+      <span>P${preview.page}</span>
+    `;
+    button.addEventListener("click", () => openPdfAt(pdfUrl, preview.page));
+    nodes.pdfPreviewGallery.appendChild(button);
+  });
 }
 
 async function startUrlIngest() {
@@ -457,6 +491,19 @@ function toggleSidebar() {
   nodes.appShell.classList.toggle("sidebar-collapsed", state.sidebarCollapsed);
 }
 
+function setViewMode(mode) {
+  state.viewMode = mode;
+  applyViewMode();
+}
+
+function applyViewMode() {
+  nodes.appShell.classList.remove("view-mode-both", "view-mode-analysis", "view-mode-pdf");
+  nodes.appShell.classList.add(`view-mode-${state.viewMode}`);
+  [...nodes.viewToggle.querySelectorAll(".view-toggle-button")].forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === state.viewMode);
+  });
+}
+
 function bindUploadInteractions() {
   nodes.uploadDropzone.addEventListener("click", () => {
     if (!nodes.ingestUrlButton.disabled) {
@@ -508,6 +555,12 @@ function compactUsd(value) {
   return `$${Number(value || 0).toFixed(4)}`;
 }
 
+function buildPdfViewerUrl(pdfUrl, page) {
+  const separator = pdfUrl.includes("?") ? "&" : "?";
+  const cacheBust = `_viewer_jump=${Date.now()}`;
+  return `${pdfUrl}${separator}${cacheBust}#page=${page}&zoom=page-width`;
+}
+
 function formatUsd(value) {
   return Number(value || 0).toFixed(4);
 }
@@ -541,8 +594,16 @@ nodes.ingestUrlInput.addEventListener("keydown", (event) => {
   }
 });
 nodes.sidebarToggle.addEventListener("click", toggleSidebar);
+nodes.viewToggle.addEventListener("click", (event) => {
+  const button = event.target.closest(".view-toggle-button");
+  if (!button) {
+    return;
+  }
+  setViewMode(button.dataset.mode);
+});
 
 bindUploadInteractions();
+applyViewMode();
 
 bootstrap().catch((error) => {
   nodes.articleList.innerHTML = `<div class="article-card muted">加载失败：${escapeHtml(error.message || "unknown error")}</div>`;

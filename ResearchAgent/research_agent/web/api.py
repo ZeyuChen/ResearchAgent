@@ -14,6 +14,7 @@ from research_agent.services.job_manager import JobManager
 from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import extract_pdf_page_refs, inject_pdf_page_links, render_markdown
 from research_agent.services.manual_ingest import ManualIngestService
+from research_agent.services.pdf_preview import PDFPreviewService
 from research_agent.services.storage_manager import StorageManager
 
 
@@ -26,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     storage_manager = StorageManager(app_settings.data_dir)
     llm_processor = LLMProcessor(app_settings)
     manual_ingest = ManualIngestService(app_settings, storage_manager, llm_processor)
+    pdf_preview_service = PDFPreviewService(app_settings.data_dir)
     job_manager = JobManager()
     static_dir = app_settings.project_root / "research_agent" / "web" / "static"
 
@@ -57,11 +59,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pdf_source = next((entry["url"] for entry in source_files if entry.get("name") == "source.pdf"), "")
         rendered_html = render_markdown(article.get("markdown", ""))
         rendered_html = inject_pdf_page_links(rendered_html, pdf_source or None)
+        previews: list[dict] = []
+        if pdf_source and article.get("article_path"):
+            item_dir = (app_settings.data_dir / article["article_path"]).parent
+            pdf_path = item_dir / "source.pdf"
+            preview_entries = pdf_preview_service.ensure_previews(pdf_path, extract_pdf_page_refs(article.get("markdown", "")))
+            previews = [
+                {
+                    **entry,
+                    "url": f"/files/{entry['path']}",
+                }
+                for entry in preview_entries
+            ]
         return {
             **article,
             "source_files": source_files,
             "pdf_source_url": pdf_source,
             "pdf_page_refs": extract_pdf_page_refs(article.get("markdown", "")),
+            "pdf_previews": previews,
             "rendered_html": rendered_html,
         }
 

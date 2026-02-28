@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <div class="app-shell" id="appShell">
+    <div class="app-shell view-mode-both" id="appShell">
       <header class="app-bar">
         <div class="app-bar-left">
           <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧边栏">☰</button>
@@ -95,7 +95,14 @@
               <div class="section-kicker">Reader Mode</div>
               <h2 id="heroTitle">选择左侧论文开始阅读</h2>
             </div>
-            <div id="metaBadges" class="badge-row"></div>
+            <div class="hero-side">
+              <div id="metaBadges" class="badge-row"></div>
+              <div class="view-toggle" id="viewToggle">
+                <button class="view-toggle-button active" data-mode="both" type="button">双栏</button>
+                <button class="view-toggle-button" data-mode="analysis" type="button">仅解析</button>
+                <button class="view-toggle-button" data-mode="pdf" type="button">仅原文</button>
+              </div>
+            </div>
           </section>
 
           <section id="emptyState" class="panel empty-state">
@@ -105,29 +112,34 @@
 
           <section id="articleView" class="reader-shell hidden">
             <section class="panel analysis-panel">
-              <div class="analysis-topbar">
-                <a id="sourceLink" class="secondary-button hidden" target="_blank" rel="noreferrer">查看原始来源</a>
-                <div id="fileActions" class="inline-actions"></div>
-              </div>
-
-              <div class="analysis-meta">
-                <div class="summary-stack">
-                  <div class="mini-title">摘要</div>
-                  <p id="summaryText"></p>
+              <div class="analysis-topbar compact">
+                <div class="analysis-actions">
+                  <a id="sourceLink" class="secondary-button hidden" target="_blank" rel="noreferrer">查看原始来源</a>
+                  <div id="fileActions" class="inline-actions"></div>
                 </div>
                 <div id="usageInline" class="usage-inline"></div>
               </div>
 
-              <div class="analysis-indexes">
-                <section class="inline-panel">
+              <div class="summary-stack inline">
+                <div class="mini-title">摘要</div>
+                <p id="summaryText"></p>
+              </div>
+
+              <section class="reader-tools">
+                <div class="tool-group">
                   <div class="mini-title">解析索引</div>
                   <div id="headingIndex" class="heading-index"></div>
-                </section>
-                <section class="inline-panel">
+                </div>
+                <div class="tool-group">
                   <div class="mini-title">原文页码跳转</div>
                   <div id="pdfPageRefs" class="page-ref-list"></div>
-                </section>
-              </div>
+                </div>
+              </section>
+
+              <section id="previewStrip" class="inline-panel preview-strip hidden">
+                <div class="mini-title">重点图表 / 表格页</div>
+                <div id="pdfPreviewGallery" class="preview-gallery"></div>
+              </section>
 
               <article id="articleBody" class="article-body"></article>
             </section>
