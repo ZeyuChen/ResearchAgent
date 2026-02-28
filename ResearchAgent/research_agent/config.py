@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 DEFAULT_KEYWORDS = [
     "rlhf",
@@ -53,6 +55,7 @@ class Settings:
     @classmethod
     def from_env(cls, project_root: Path | None = None) -> "Settings":
         root = project_root or Path(__file__).resolve().parents[1]
+        load_dotenv(root / ".env", override=False)
         data_dir = Path(os.getenv("RESEARCH_AGENT_DATA_DIR", root / "data")).expanduser()
         logs_dir = root / "logs"
         return cls(
