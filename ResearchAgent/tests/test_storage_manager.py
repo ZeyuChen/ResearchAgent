@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -22,7 +23,8 @@ def test_storage_manager_persists_metadata_and_article() -> None:
 
         stored = manager.persist_item(item, {"source.html": b"<html></html>"})
         manager.write_article(stored, "# Test")
+        metadata = json.loads(stored.metadata_path.read_text(encoding="utf-8"))
 
         assert stored.metadata_path.exists()
         assert stored.article_path.exists()
-        assert manager.load_article(stored.item_dir.name) is not None
+        assert manager.load_article(metadata["article_id"]) is not None

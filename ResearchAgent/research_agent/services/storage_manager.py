@@ -69,9 +69,9 @@ class StorageManager:
 
     def load_article(self, article_id: str) -> dict | None:
         for metadata_path in self.data_dir.glob("*/*/metadata.json"):
-            if metadata_path.parent.name != article_id:
-                continue
             metadata = self._read_metadata(metadata_path)
+            if metadata.get("article_id") != article_id:
+                continue
             article_path = metadata_path.parent / "article.md"
             metadata["markdown"] = article_path.read_text(encoding="utf-8") if article_path.exists() else ""
             return metadata
@@ -82,6 +82,7 @@ class StorageManager:
         return f"{item.source}-{slug}"
 
     def _build_metadata(self, item: ResearchItem, item_dir: Path, source_files: dict[str, Path]) -> dict:
+        archive_date = item_dir.parent.name
         relative_source_files = [
             {
                 "name": name,
@@ -91,7 +92,8 @@ class StorageManager:
             for name, path in source_files.items()
         ]
         return {
-            "article_id": item_dir.name,
+            "article_id": f"{archive_date}--{item_dir.name}",
+            "archive_date": archive_date,
             "source": item.source,
             "identifier": item.identifier,
             "title": item.title,

@@ -37,7 +37,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/library")
     async def library() -> dict:
         articles = storage_manager.scan_library()
-        dates = sorted({row["created_at"][:10] for row in articles}, reverse=True)
+        dates = sorted({row.get("archive_date", "") for row in articles if row.get("archive_date")}, reverse=True)
         topic_counter: Counter[str] = Counter()
         for article in articles:
             topic_counter.update(article.get("tags", []))

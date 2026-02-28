@@ -73,7 +73,7 @@ function createFilterChip(label, active, onClick) {
 
 function renderArticleList() {
   const filtered = state.library.filter((article) => {
-    const dateMatch = state.selectedDate === "all" || (article.created_at || "").startsWith(state.selectedDate);
+    const dateMatch = state.selectedDate === "all" || (article.archive_date || "") === state.selectedDate;
     const topicMatch = state.selectedTopic === "all" || (article.tags || []).includes(state.selectedTopic);
     const textBlob = `${article.title} ${article.summary}`.toLowerCase();
     const searchMatch = !state.search || textBlob.includes(state.search.toLowerCase());
@@ -96,7 +96,7 @@ function renderArticleList() {
     button.innerHTML = `
       <div class="article-source">${article.source.toUpperCase()}</div>
       <div class="article-title">${escapeHtml(article.title)}</div>
-      <div class="article-meta">${(article.created_at || "").slice(0, 10)} · ${(article.tags || []).slice(0, 3).join(" / ")}</div>
+      <div class="article-meta">${article.archive_date || ""} · ${(article.tags || []).slice(0, 3).join(" / ")}</div>
       <div class="article-excerpt">${escapeHtml((article.article_excerpt || article.summary || "").slice(0, 160))}</div>
     `;
     button.addEventListener("click", () => loadArticle(article.article_id));
