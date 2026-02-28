@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+ResearchAgent/data/*
+!ResearchAgent/data/.gitkeep
+ResearchAgent/logs/*
+!ResearchAgent/logs/.gitkeep
+ResearchAgent/.cache/

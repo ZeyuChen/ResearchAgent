@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ResearchAgent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="drawer">
+        <div class="brand-card">
+          <div class="brand-mark">R</div>
+          <div>
+            <h1>ResearchAgent</h1>
+            <p>LLM RL 研究知识库</p>
+          </div>
+        </div>
+
+        <label class="search-shell">
+          <span>搜索标题 / 摘要</span>
+          <input id="searchInput" type="search" placeholder="例如：DPO / vLLM / Distributed Training" />
+        </label>
+
+        <section class="sidebar-group">
+          <div class="group-title">日期归档</div>
+          <div id="dateFilters" class="chip-list"></div>
+        </section>
+
+        <section class="sidebar-group">
+          <div class="group-title">主题标签</div>
+          <div id="topicFilters" class="chip-list"></div>
+        </section>
+
+        <section class="sidebar-group">
+          <div class="group-title">文章列表</div>
+          <div id="articleList" class="article-list"></div>
+        </section>
+      </aside>
+
+      <main class="content-area">
+        <header class="top-bar">
+          <div>
+            <div class="eyebrow">Local Knowledge Base</div>
+            <h2 id="heroTitle">等待选择文章</h2>
+          </div>
+          <div id="metaBadges" class="badge-row"></div>
+        </header>
+
+        <section id="emptyState" class="surface empty-state">
+          <h3>当前还没有选中的文章</h3>
+          <p>左侧会按日期、主题和标题组织已归档内容。点击任意条目即可阅读 Markdown 解析与原始文件。</p>
+        </section>
+
+        <article id="articleView" class="surface article-view hidden">
+          <div class="article-actions">
+            <a id="sourceLink" class="action-button hidden" target="_blank" rel="noreferrer">查看原始来源</a>
+            <div id="fileActions" class="inline-actions"></div>
+          </div>
+          <section id="summaryBlock" class="summary-block"></section>
+          <section id="articleBody" class="article-body"></section>
+        </article>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
