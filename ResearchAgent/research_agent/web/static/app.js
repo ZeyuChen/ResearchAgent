@@ -33,6 +33,7 @@ const nodes = {
   headingIndex: document.getElementById("headingIndex"),
   pdfPageRefs: document.getElementById("pdfPageRefs"),
   previewStrip: document.getElementById("previewStrip"),
+  previewTitle: document.getElementById("previewTitle"),
   pdfPreviewGallery: document.getElementById("pdfPreviewGallery"),
   pdfPane: document.getElementById("pdfPane"),
   pdfViewer: document.getElementById("pdfViewer"),
@@ -181,7 +182,7 @@ function renderArticle(article) {
   nodes.articleBody.innerHTML = article.rendered_html || "<p>暂无正文。</p>";
   renderHeadingIndex();
   renderPdfPane(article);
-  renderPdfPreviewGallery(article);
+  renderVisualGallery(article);
 }
 
 function renderMetaBadges(article) {
@@ -313,16 +314,37 @@ function openPdfAt(pdfUrl, page) {
   }
 }
 
-function renderPdfPreviewGallery(article) {
+function renderVisualGallery(article) {
+  const sourceFigures = article.source_figure_gallery || [];
   const previews = article.pdf_previews || [];
   const pdfUrl = article.pdf_source_url || "";
   nodes.pdfPreviewGallery.innerHTML = "";
+
+  if (sourceFigures.length) {
+    nodes.previewTitle.textContent = "LaTeX 原始图集";
+    nodes.previewStrip.classList.remove("hidden");
+    sourceFigures.forEach((figure) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "preview-card figure-card";
+      button.innerHTML = `
+        <img src="${escapeHtml(figure.url)}" alt="${escapeHtml(figure.title || figure.source_name || "论文配图")}" />
+        <span>${escapeHtml(figure.title || figure.source_name || "论文配图")}</span>
+      `;
+      button.addEventListener("click", () => {
+        window.open(figure.url, "_blank", "noopener");
+      });
+      nodes.pdfPreviewGallery.appendChild(button);
+    });
+    return;
+  }
 
   if (!previews.length || !pdfUrl) {
     nodes.previewStrip.classList.add("hidden");
     return;
   }
 
+  nodes.previewTitle.textContent = "重点图表 / 表格页";
   nodes.previewStrip.classList.remove("hidden");
   previews.forEach((preview) => {
     const button = document.createElement("button");

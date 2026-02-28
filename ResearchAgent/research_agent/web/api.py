@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections import Counter
 import threading
+import re
+from collections import Counter
 from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -10,12 +11,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from research_agent.config import Settings
+from research_agent.services.arxiv_source_gallery import ArxivSourceGalleryService
 from research_agent.services.job_manager import JobManager
 from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import extract_pdf_page_refs, inject_pdf_page_links, render_markdown
 from research_agent.services.manual_ingest import ManualIngestService
 from research_agent.services.pdf_preview import PDFPreviewService
 from research_agent.services.storage_manager import StorageManager
+
+ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}(?:v\d+)?)")
 
 
 class URLIngestRequest(BaseModel):
@@ -28,6 +32,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     llm_processor = LLMProcessor(app_settings)
     manual_ingest = ManualIngestService(app_settings, storage_manager, llm_processor)
     pdf_preview_service = PDFPreviewService(app_settings.data_dir)
+    arxiv_source_gallery_service = ArxivSourceGalleryService(app_settings.data_dir)
     job_manager = JobManager()
     static_dir = app_settings.project_root / "research_agent" / "web" / "static"
 
@@ -48,6 +53,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
+    def infer_arxiv_id(article: dict) -> str:
+        for candidate in (
+            article.get("identifier", ""),
+            article.get("source_url", ""),
+            article.get("meta", {}).get("arxiv_id", ""),
+        ):
+            if not candidate:
+                continue
+            match = ARXIV_ID_RE.search(str(candidate))
+            if match:
+                return match.group(1)
+        return ""
+
     def build_article_payload(article: dict) -> dict:
         source_files = [
             {
@@ -59,9 +77,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pdf_source = next((entry["url"] for entry in source_files if entry.get("name") == "source.pdf"), "")
         rendered_html = render_markdown(article.get("markdown", ""))
         rendered_html = inject_pdf_page_links(rendered_html, pdf_source or None)
+        item_dir = (app_settings.data_dir / article["article_path"]).parent if article.get("article_path") else None
+
+        source_gallery: list[dict] = []
+        if item_dir:
+            arxiv_gallery_entries = arxiv_source_gallery_service.ensure_gallery(item_dir, infer_arxiv_id(article))
+            source_gallery = [
+                {
+                    **entry,
+                    "url": f"/files/{entry['path']}",
+                }
+                for entry in arxiv_gallery_entries
+            ]
+
         previews: list[dict] = []
-        if pdf_source and article.get("article_path"):
-            item_dir = (app_settings.data_dir / article["article_path"]).parent
+        if pdf_source and item_dir:
             pdf_path = item_dir / "source.pdf"
             preview_entries = pdf_preview_service.ensure_previews(pdf_path, extract_pdf_page_refs(article.get("markdown", "")))
             previews = [
@@ -76,6 +106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "source_files": source_files,
             "pdf_source_url": pdf_source,
             "pdf_page_refs": extract_pdf_page_refs(article.get("markdown", "")),
+            "source_figure_gallery": source_gallery,
             "pdf_previews": previews,
             "rendered_html": rendered_html,
         }
