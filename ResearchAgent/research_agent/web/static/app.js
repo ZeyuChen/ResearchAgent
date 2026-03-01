@@ -204,9 +204,12 @@ function renderFolders() {
   typeTitle.textContent = "资料类型";
   typeSection.appendChild(typeTitle);
 
+  const typeCloud = document.createElement("div");
+  typeCloud.className = "type-folder-cloud";
   buildPrimaryFolders().forEach((entry) => {
-    typeSection.appendChild(createFolderButton(entry));
+    typeCloud.appendChild(createTypeFolderButton(entry));
   });
+  typeSection.appendChild(typeCloud);
   nodes.folderTree.appendChild(typeSection);
 
   if (!state.topics.length) {
@@ -257,6 +260,26 @@ function createFolderButton(entry) {
       <span class="folder-label">${escapeHtml(entry.label)}</span>
     </span>
     <span class="folder-count">${entry.count}</span>
+  `;
+  button.addEventListener("click", () => {
+    state.selectedFolder = entry.key;
+    renderFolders();
+    renderArticleList();
+    renderLibraryBrowser();
+  });
+  return button;
+}
+
+function createTypeFolderButton(entry) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `type-folder-pill ${state.selectedFolder === entry.key ? "active" : ""}`;
+  button.innerHTML = `
+    <span class="type-folder-main">
+      <span class="folder-glyph">${folderGlyph(entry.kind)}</span>
+      <span class="type-folder-name">${escapeHtml(entry.label)}</span>
+    </span>
+    <span class="type-folder-count">${entry.count}</span>
   `;
   button.addEventListener("click", () => {
     state.selectedFolder = entry.key;
