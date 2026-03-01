@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui5" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui5" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui6" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui6" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -82,6 +82,17 @@
         </aside>
 
         <main class="main-stage">
+          <section id="libraryBrowser" class="panel library-browser">
+            <div class="library-browser-head">
+              <div>
+                <div class="mini-title">我的文库</div>
+                <h2>所有论文与报告</h2>
+              </div>
+              <div class="library-browser-meta">点击任意条目进入双栏阅读</div>
+            </div>
+            <div id="libraryGrid" class="library-browser-grid"></div>
+          </section>
+
           <section id="libraryHeader" class="hero-bar">
             <div>
               <h2 id="heroTitle">选择左侧论文开始阅读</h2>
@@ -226,6 +237,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui5"></script>
+    <script src="/static/app.js?v=20260301-ui6"></script>
   </body>
 </html>

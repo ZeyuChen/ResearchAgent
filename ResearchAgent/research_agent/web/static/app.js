@@ -28,6 +28,8 @@ const nodes = {
   workspaceNav: document.getElementById("workspaceNav"),
   librarySidebar: document.getElementById("librarySidebar"),
   chatSidebar: document.getElementById("chatSidebar"),
+  libraryBrowser: document.getElementById("libraryBrowser"),
+  libraryGrid: document.getElementById("libraryGrid"),
   articleList: document.getElementById("articleList"),
   articleCount: document.getElementById("articleCount"),
   topicFilters: document.getElementById("topicFilters"),
@@ -97,6 +99,7 @@ async function refreshLibrary() {
   }
   renderFilters();
   renderArticleList();
+  renderLibraryBrowser();
   renderChatSidebar();
   renderChatView();
 }
@@ -118,19 +121,22 @@ async function refreshChatOptions() {
 
 function renderWorkspace() {
   nodes.workspaceNav.querySelectorAll(".workspace-button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.workspace === state.workspace);
+    const isActive = button.dataset.workspace === "library"
+      ? state.workspace === "library" || state.workspace === "reader"
+      : button.dataset.workspace === state.workspace;
+    button.classList.toggle("active", isActive);
   });
 
   const isLibrary = state.workspace === "library";
-  nodes.librarySidebar.classList.toggle("hidden", !isLibrary);
-  nodes.chatSidebar.classList.toggle("hidden", isLibrary);
-  nodes.libraryHeader.classList.toggle("hidden", !isLibrary);
-  nodes.emptyState.classList.toggle("hidden", !isLibrary || !nodes.articleView.classList.contains("hidden"));
-  if (!isLibrary && nodes.articleView.classList.contains("hidden")) {
-    nodes.emptyState.classList.add("hidden");
-  }
-  nodes.articleView.classList.toggle("hidden", !isLibrary || !state.activeArticleId);
-  nodes.chatView.classList.toggle("hidden", isLibrary);
+  const isReader = state.workspace === "reader";
+  const isChat = state.workspace === "chat";
+  nodes.librarySidebar.classList.toggle("hidden", isChat);
+  nodes.chatSidebar.classList.toggle("hidden", !isChat);
+  nodes.libraryBrowser.classList.toggle("hidden", !isLibrary);
+  nodes.libraryHeader.classList.toggle("hidden", !isReader);
+  nodes.emptyState.classList.add("hidden");
+  nodes.articleView.classList.toggle("hidden", !isReader || !state.activeArticleId);
+  nodes.chatView.classList.toggle("hidden", !isChat);
   renderChatView();
 }
 
@@ -148,6 +154,7 @@ function renderFilters() {
     state.selectedTopic = "all";
     renderFilters();
     renderArticleList();
+    renderLibraryBrowser();
   }));
 
   state.topics.forEach((topic) => {
@@ -155,6 +162,7 @@ function renderFilters() {
       state.selectedTopic = topic.name;
       renderFilters();
       renderArticleList();
+      renderLibraryBrowser();
     }));
   });
 }
@@ -191,7 +199,7 @@ function renderArticleList() {
       .join("");
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
-      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 160))}</div>
+      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 96))}</div>
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>
@@ -200,6 +208,40 @@ function renderArticleList() {
     `;
     button.addEventListener("click", () => loadArticle(article.article_id));
     nodes.articleList.appendChild(button);
+  });
+}
+
+function renderLibraryBrowser() {
+  const filtered = getFilteredArticles();
+  nodes.libraryGrid.innerHTML = "";
+
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "library-browser-empty";
+    empty.textContent = "当前筛选条件下没有可展示的论文。";
+    nodes.libraryGrid.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach((article) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `library-browser-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
+    const usage = article.llm_usage || {};
+    const tags = (article.display_tags || []).slice(0, 4)
+      .map((tag) => `<span class="card-tag">${escapeHtml(tag)}</span>`)
+      .join("");
+    button.innerHTML = `
+      <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
+      <div class="library-browser-summary">${escapeHtml((article.summary || "").slice(0, 220))}</div>
+      ${tags ? `<div class="card-tags">${tags}</div>` : ""}
+      <div class="library-browser-footer">
+        <span>${compactTokens(usage.total_tokens || 0)} · ${compactUsd(usage.estimated_cost_usd || 0)}</span>
+        <span>进入阅读</span>
+      </div>
+    `;
+    button.addEventListener("click", () => loadArticle(article.article_id, "reader"));
+    nodes.libraryGrid.appendChild(button);
   });
 }
 
@@ -212,10 +254,11 @@ function getFilteredArticles() {
   });
 }
 
-async function loadArticle(articleId) {
+async function loadArticle(articleId, nextWorkspace = "reader") {
   state.activeArticleId = articleId;
   state.chatArticleId = articleId;
   renderArticleList();
+  renderLibraryBrowser();
   renderChatSidebar();
 
   const response = await fetch(`/api/articles/${articleId}`);
@@ -224,7 +267,9 @@ async function loadArticle(articleId) {
     return;
   }
   const article = await response.json();
+  state.workspace = nextWorkspace;
   renderArticle(article);
+  renderWorkspace();
 }
 
 function renderArticle(article) {
@@ -235,6 +280,7 @@ function renderArticle(article) {
     state.viewMode = "analysis";
   }
   renderArticleList();
+  renderLibraryBrowser();
   renderChatSidebar();
 
   nodes.emptyState.classList.add("hidden");
@@ -989,6 +1035,7 @@ function escapeHtml(value) {
 nodes.searchInput.addEventListener("input", (event) => {
   state.search = event.target.value.trim();
   renderArticleList();
+  renderLibraryBrowser();
 });
 
 nodes.ingestUrlButton.addEventListener("click", startUrlIngest);

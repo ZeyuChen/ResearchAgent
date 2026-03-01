@@ -356,12 +356,18 @@ select {
 
 .article-card {
   width: 100%;
+  min-height: 132px;
+  max-height: 132px;
   padding: 12px;
   border: 0;
   border-radius: 16px;
   background: transparent;
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  align-content: start;
   transition: background-color 0.16s ease, box-shadow 0.16s ease;
 }
 
@@ -378,6 +384,9 @@ select {
 }
 
 .article-card.muted {
+  min-height: auto;
+  max-height: none;
+  display: block;
   cursor: default;
   color: var(--muted);
 }
@@ -425,6 +434,101 @@ select {
   gap: 8px;
   color: var(--muted);
   font-size: 0.73rem;
+}
+
+.library-browser {
+  min-height: calc(100vh - 106px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px;
+}
+
+.library-browser-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.library-browser-head h2 {
+  margin: 4px 0 0;
+  font-size: 1.08rem;
+  font-weight: 600;
+}
+
+.library-browser-meta {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.library-browser-grid {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.library-browser-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 0;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  text-align: left;
+  cursor: pointer;
+  min-height: 200px;
+  transition: background-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.library-browser-card:hover,
+.library-browser-card.selected {
+  background: var(--surface);
+  box-shadow:
+    inset 0 0 0 1px rgba(17, 24, 39, 0.06),
+    0 10px 24px rgba(17, 24, 39, 0.06);
+  transform: translateY(-1px);
+}
+
+.library-browser-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.library-browser-summary {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.library-browser-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.library-browser-empty {
+  display: grid;
+  place-items: center;
+  min-height: 280px;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  text-align: center;
+  padding: 24px;
 }
 
 .intake-actions {
