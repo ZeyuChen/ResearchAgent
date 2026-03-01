@@ -7,6 +7,7 @@ const state = {
   activeJobId: null,
   activeJobStartedAt: 0,
   ingestSuggestions: [],
+  selectionDraft: null,
   sidebarCollapsed: false,
   workspace: "library",
   viewMode: "both",
@@ -47,6 +48,7 @@ const nodes = {
   heroTitle: document.getElementById("heroTitle"),
   metaBadges: document.getElementById("metaBadges"),
   viewToggle: document.getElementById("viewToggle"),
+  saveSummaryToFlomo: document.getElementById("saveSummaryToFlomo"),
   summaryText: document.getElementById("summaryText"),
   usageInline: document.getElementById("usageInline"),
   articleBody: document.getElementById("articleBody"),
@@ -76,6 +78,7 @@ const nodes = {
   progressHint: document.getElementById("progressHint"),
   ingestModal: document.getElementById("ingestModal"),
   closeIngestModal: document.getElementById("closeIngestModal"),
+  selectionFlomoButton: document.getElementById("selectionFlomoButton"),
   chatArticleSelect: document.getElementById("chatArticleSelect"),
   chatModelSelect: document.getElementById("chatModelSelect"),
   chatContextHint: document.getElementById("chatContextHint"),
@@ -128,6 +131,7 @@ async function refreshChatOptions() {
 }
 
 function renderWorkspace() {
+  hideSelectionFlomoButton();
   document.querySelectorAll(".workspace-button").forEach((button) => {
     const isActive = button.dataset.workspace === "library"
       ? state.workspace === "library" || state.workspace === "reader"
@@ -410,6 +414,7 @@ async function loadArticle(articleId, nextWorkspace = "reader") {
 }
 
 function renderArticle(article) {
+  hideSelectionFlomoButton();
   state.activeArticleId = article.article_id;
   state.chatArticleId = article.article_id;
   state.articleHasPdf = Boolean(article.pdf_source_url);
@@ -1032,6 +1037,114 @@ function setProgress(percent, label, hint) {
   nodes.progressHint.textContent = hint || "";
 }
 
+async function saveSnippetToFlomo(content, sourceKind) {
+  const text = String(content || "").trim();
+  if (!text) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/integrations/flomo/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: text,
+        article_id: state.activeArticleId || state.chatArticleId || null,
+        source_kind: sourceKind,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "保存到 Flomo 失败");
+    }
+    nodes.selectionFlomoButton.textContent = "已保存";
+    window.setTimeout(() => {
+      if (!nodes.selectionFlomoButton.classList.contains("hidden")) {
+        nodes.selectionFlomoButton.textContent = "保存至 Flomo";
+      }
+    }, 1200);
+  } catch (error) {
+    const message = error.message || "保存到 Flomo 失败";
+    nodes.selectionFlomoButton.textContent = "保存失败";
+    window.setTimeout(() => {
+      nodes.selectionFlomoButton.textContent = "保存至 Flomo";
+      hideSelectionFlomoButton();
+    }, 1200);
+    if (!nodes.ingestModal.classList.contains("hidden")) {
+      showStatus(message, "error");
+    } else {
+      nodes.chatStatus.textContent = message;
+    }
+  }
+}
+
+function hideSelectionFlomoButton() {
+  state.selectionDraft = null;
+  nodes.selectionFlomoButton.classList.add("hidden");
+  nodes.selectionFlomoButton.textContent = "保存至 Flomo";
+}
+
+function selectionSourceKind(element) {
+  if (element.closest("#chatMessages")) {
+    return "chat";
+  }
+  if (element.closest(".summary-stack")) {
+    return "summary";
+  }
+  return "selection";
+}
+
+function allowedSelectionRoot(node) {
+  if (!(node instanceof Node)) {
+    return null;
+  }
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  if (!(element instanceof HTMLElement)) {
+    return null;
+  }
+  return element.closest("#articleBody, #summaryText, #chatMessages");
+}
+
+function updateSelectionFlomoButton() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    hideSelectionFlomoButton();
+    return;
+  }
+
+  const root = allowedSelectionRoot(selection.anchorNode);
+  const focusRoot = allowedSelectionRoot(selection.focusNode);
+  if (!root || !focusRoot || root !== focusRoot) {
+    hideSelectionFlomoButton();
+    return;
+  }
+
+  const text = selection.toString().replace(/\s+/g, " ").trim();
+  if (text.length < 8) {
+    hideSelectionFlomoButton();
+    return;
+  }
+
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  if (!rect.width && !rect.height) {
+    hideSelectionFlomoButton();
+    return;
+  }
+
+  state.selectionDraft = {
+    text,
+    sourceKind: selectionSourceKind(root),
+  };
+
+  const top = Math.max(12, rect.top + window.scrollY - 46);
+  const left = Math.min(
+    window.scrollX + window.innerWidth - 144,
+    Math.max(12, rect.left + window.scrollX + rect.width / 2 - 56)
+  );
+  nodes.selectionFlomoButton.style.top = `${top}px`;
+  nodes.selectionFlomoButton.style.left = `${left}px`;
+  nodes.selectionFlomoButton.classList.remove("hidden");
+}
+
 function clearIngestSuggestions() {
   state.ingestSuggestions = [];
   nodes.ingestSuggestions.innerHTML = "";
@@ -1190,6 +1303,44 @@ function bindIngestModalInteractions() {
     }
     if (target.dataset.closeIngest === "true" && !nodes.ingestUrlButton.disabled) {
       closeIngestModal();
+    }
+  });
+}
+
+function bindFlomoInteractions() {
+  nodes.saveSummaryToFlomo.addEventListener("click", async () => {
+    await saveSnippetToFlomo(nodes.summaryText.textContent || "", "summary");
+  });
+
+  nodes.selectionFlomoButton.addEventListener("click", async (event) => {
+    event.preventDefault();
+    if (!state.selectionDraft) {
+      hideSelectionFlomoButton();
+      return;
+    }
+    const draft = state.selectionDraft;
+    await saveSnippetToFlomo(draft.text, draft.sourceKind);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    hideSelectionFlomoButton();
+  });
+
+  document.addEventListener("selectionchange", () => {
+    window.setTimeout(updateSelectionFlomoButton, 0);
+  });
+
+  document.addEventListener("scroll", hideSelectionFlomoButton, true);
+  window.addEventListener("resize", hideSelectionFlomoButton);
+  document.addEventListener("mousedown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.closest("#selectionFlomoButton")) {
+      return;
+    }
+    if (!target.closest("#articleBody, #summaryText, #chatMessages")) {
+      hideSelectionFlomoButton();
     }
   });
 }
@@ -1424,6 +1575,7 @@ nodes.chatInput.addEventListener("keydown", async (event) => {
 bindUploadInteractions();
 bindLightboxInteractions();
 bindIngestModalInteractions();
+bindFlomoInteractions();
 bindLayoutResizeInteractions();
 applyViewMode();
 

@@ -1464,6 +1464,27 @@ body.layout-resizing {
   font-size: 0.9rem;
 }
 
+.summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.subtle-action {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.subtle-action:hover {
+  color: var(--text);
+}
+
 .usage-inline {
   justify-content: flex-end;
   align-items: center;
@@ -1773,6 +1794,28 @@ body.lightbox-open {
   width: auto;
   height: auto;
   object-fit: contain;
+}
+
+.selection-flomo-button {
+  position: fixed;
+  z-index: 42;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: #111111;
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.16);
+  cursor: pointer;
+}
+
+.selection-flomo-button:hover {
+  background: #000000;
 }
 
 .app-shell.view-mode-analysis .pdf-panel {

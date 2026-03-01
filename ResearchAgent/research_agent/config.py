@@ -42,6 +42,7 @@ class Settings:
     prompt_path: Path
     gemini_api_key: str | None
     github_token: str | None
+    flomo_webhook_url: str | None
     host: str = "127.0.0.1"
     port: int = 8000
     schedule_time: str = "08:30"
@@ -68,6 +69,7 @@ class Settings:
             prompt_path=root / "prompts" / "gemini_system_prompt.txt",
             gemini_api_key=os.getenv("GEMINI_API_KEY"),
             github_token=os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN"),
+            flomo_webhook_url=os.getenv("FLOMO_WEBHOOK_URL"),
             host=os.getenv("RESEARCH_AGENT_HOST", "127.0.0.1"),
             port=int(os.getenv("RESEARCH_AGENT_PORT", "8000")),
             schedule_time=os.getenv("RESEARCH_AGENT_SCHEDULE_TIME", "08:30"),
