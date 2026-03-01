@@ -234,7 +234,14 @@ class LLMProcessor:
         response = self.client.models.generate_content(
             model=self.settings.gemini_model,
             contents=[
-                "请深度阅读这份 PDF。输出更完整、更详细的 Markdown 解析文章，务必覆盖数据、算法、工程三条主线，并且对工程 / Infra 技术点用编号列表逐条拆解。请尽量给出关键图表 / 表格 / 公式对应的页码标记，例如 [P12]。",
+                (
+                    "请深度阅读这份 PDF。主体请严格按原文章节顺序输出，并在每个章节下按段落顺序逐段翻译。"
+                    "不要把高信息密度内容压成几句总结。"
+                    "请尽量保留关键公式、图表、表格、实验设置、并列要点和附录中的关键技术细节。"
+                    "请在内容顺序上体现段落顺序，但不要显式输出“段落1 / 段落2 / 段落3”这类机械标签。"
+                    "全文转述完成后，再单独追加一节“专家点评”，从数据、算法、工程 / Infra 三个维度点评创新点与落地价值。"
+                    "请尽量给出关键图表 / 表格 / 公式对应的页码标记，例如 [P12]。"
+                ),
                 uploaded_file,
             ],
             config=types.GenerateContentConfig(

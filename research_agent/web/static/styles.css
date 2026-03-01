@@ -1696,6 +1696,14 @@ body.layout-resizing {
   color: var(--text);
 }
 
+.subtle-action-danger {
+  color: #b42318;
+}
+
+.subtle-action-danger:hover {
+  color: #912018;
+}
+
 .usage-inline {
   justify-content: flex-end;
   align-items: center;

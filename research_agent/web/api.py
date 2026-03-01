@@ -300,6 +300,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Article not found")
         return build_article_payload(article)
 
+    @app.delete("/api/articles/{article_id}")
+    async def delete_article(article_id: str) -> dict:
+        article = storage_manager.load_article(article_id)
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        try:
+            deleted = storage_manager.delete_article(article_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Article not found")
+        chat_cleanup = chat_service.delete_article_state(article_id)
+        return {
+            "ok": True,
+            "article_id": article_id,
+            "title": deleted.get("title", article.get("title", "Untitled")),
+            "chat_cleanup": chat_cleanup,
+        }
+
     @app.get("/api/search/arxiv")
     async def arxiv_search(q: str) -> dict:
         try:

@@ -208,6 +208,48 @@ class ChatService:
         )
         return self._serialize_session(session)
 
+    def delete_article_state(self, article_id: str) -> dict[str, int]:
+        if not article_id:
+            return {"sessions_removed": 0, "contexts_removed": 0}
+
+        contexts_to_delete: list[ChatContextHandle] = []
+        with self._lock:
+            session_ids = [
+                session_id
+                for session_id, session in self._sessions.items()
+                if session.article_id == article_id
+            ]
+            for session_id in session_ids:
+                self._sessions.pop(session_id, None)
+
+            latest_keys = [
+                key
+                for key in self._latest_session_by_key
+                if key[0] == article_id
+            ]
+            for key in latest_keys:
+                self._latest_session_by_key.pop(key, None)
+
+            context_keys = [
+                key
+                for key in self._contexts
+                if key[0] == article_id
+            ]
+            for key in context_keys:
+                context = self._contexts.pop(key, None)
+                if context:
+                    contexts_to_delete.append(context)
+
+            self._persist_state_locked()
+
+        for context in contexts_to_delete:
+            self._delete_remote_context(context)
+
+        return {
+            "sessions_removed": len(session_ids),
+            "contexts_removed": len(contexts_to_delete),
+        }
+
     def _prepare_session_context(
         self,
         *,
@@ -600,3 +642,22 @@ class ChatService:
             },
         }
         self._state_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _delete_remote_context(self, context: ChatContextHandle) -> None:
+        client = self.llm_processor.client
+        if not client:
+            return
+
+        cache_name = str(context.cache_name or "").strip()
+        if cache_name:
+            try:
+                client.caches.delete(name=cache_name)
+            except Exception as exc:
+                LOGGER.warning("Failed to delete remote Gemini cache %s: %s", cache_name, exc)
+
+        file_name = str(getattr(context.file_handle, "name", "") or "").strip()
+        if file_name:
+            try:
+                client.files.delete(name=file_name)
+            except Exception as exc:
+                LOGGER.warning("Failed to delete remote Gemini file %s: %s", file_name, exc)

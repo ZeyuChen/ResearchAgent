@@ -58,6 +58,7 @@ const nodes = {
   heroTitle: document.getElementById("heroTitle"),
   metaBadges: document.getElementById("metaBadges"),
   editTagsButton: document.getElementById("editTagsButton"),
+  deleteArticleButton: document.getElementById("deleteArticleButton"),
   viewToggle: document.getElementById("viewToggle"),
   saveSummaryToFlomo: document.getElementById("saveSummaryToFlomo"),
   summaryText: document.getElementById("summaryText"),
@@ -592,6 +593,9 @@ function renderMetaBadges(article) {
   nodes.metaBadges.innerHTML = "";
   if (nodes.editTagsButton) {
     nodes.editTagsButton.disabled = !article;
+  }
+  if (nodes.deleteArticleButton) {
+    nodes.deleteArticleButton.disabled = !article;
   }
   (article.display_tags || []).slice(0, 6).forEach((value) => {
     const badge = document.createElement("span");
@@ -1711,6 +1715,51 @@ async function saveTagDraft() {
   showToast("标签已更新");
 }
 
+async function deleteActiveArticle() {
+  const article = state.library.find((entry) => entry.article_id === state.activeArticleId);
+  if (!article) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `确认删除《${article.title || "Untitled"}》吗？这会同时删除原始 PDF / HTML、Markdown、截图、图集、预览文件，以及本地聊天历史。此操作不可撤销。`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  if (nodes.deleteArticleButton) {
+    nodes.deleteArticleButton.disabled = true;
+  }
+
+  try {
+    const response = await fetch(`/api/articles/${article.article_id}`, {
+      method: "DELETE",
+    });
+    const payload = await readJsonPayload(response);
+    if (!response.ok) {
+      throw new Error(payload.detail || "删除失败");
+    }
+
+    state.activeArticleId = null;
+    state.articleHasPdf = false;
+    state.workspace = "library";
+    if (state.chatArticleId === article.article_id) {
+      state.chatArticleId = null;
+      resetChatSession();
+      state.chatSessions = [];
+    }
+
+    await refreshLibrary();
+    renderWorkspace();
+    showToast(`已删除《${payload.title || article.title || "该条目"}》及相关数据`);
+  } catch (error) {
+    showToast(error.message || "删除失败");
+  } finally {
+    renderMetaBadges(state.activeArticleId ? state.library.find((entry) => entry.article_id === state.activeArticleId) : null);
+  }
+}
+
 async function saveSnippetToFlomo(content, sourceKind, formatted = false, articleId = null) {
   const text = String(content || "").trim();
   if (!text) {
@@ -2356,6 +2405,11 @@ bindLightboxInteractions();
 bindIngestModalInteractions();
 bindFlomoInteractions();
 bindTagInteractions();
+if (nodes.deleteArticleButton) {
+  nodes.deleteArticleButton.addEventListener("click", () => {
+    void deleteActiveArticle();
+  });
+}
 bindLayoutResizeInteractions();
 nodes.chatMessages.addEventListener("scroll", () => {
   const threshold = 48;

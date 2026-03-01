@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import date, datetime
 from pathlib import Path
 
@@ -127,6 +128,21 @@ class StorageManager:
             return metadata
         return None
 
+    def delete_article(self, article_id: str) -> dict | None:
+        for metadata_path in self.data_dir.glob("*/*/metadata.json"):
+            metadata = self._read_metadata(metadata_path)
+            if metadata.get("article_id") != article_id:
+                continue
+            item_dir = metadata_path.parent.resolve()
+            data_root = self.data_dir.resolve()
+            if data_root not in item_dir.parents:
+                raise ValueError("Refusing to delete a path outside the data directory")
+
+            shutil.rmtree(item_dir)
+            self._cleanup_empty_day_dir(item_dir.parent)
+            return metadata
+        return None
+
     def _build_item_dir_name(self, item: ResearchItem) -> str:
         slug = slugify(item.title, max_length=72) or slugify(item.identifier)
         return f"{item.source}-{slug}"
@@ -163,3 +179,14 @@ class StorageManager:
     @staticmethod
     def _read_metadata(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _cleanup_empty_day_dir(self, path: Path) -> None:
+        current = path
+        data_root = self.data_dir.resolve()
+        while current.resolve() != data_root:
+            try:
+                next(current.iterdir())
+                break
+            except StopIteration:
+                current.rmdir()
+                current = current.parent

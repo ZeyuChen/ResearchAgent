@@ -94,3 +94,42 @@ def test_chat_service_persists_latest_session(tmp_path) -> None:
     assert payload["session_id"] == "chat-persist"
     assert payload["messages"][0]["text"] == "hello"
     assert payload["cache"]["kind"] == "pdf"
+
+
+def test_chat_service_deletes_article_state(tmp_path) -> None:
+    settings = Settings.from_env()
+    settings.gemini_api_key = None
+    settings.data_dir = tmp_path
+    storage = StorageManager(tmp_path)
+    service = ChatService(
+        settings=settings,
+        storage_manager=storage,
+        llm_processor=LLMProcessor(settings),
+    )
+
+    session = ChatSession(
+        session_id="chat-delete",
+        article_id="article-delete",
+        model_key="flash",
+        model_name="gemini-3-flash-preview",
+        title="Delete",
+        created_at="2026-03-01T00:00:00",
+        updated_at="2026-03-01T00:00:01",
+        messages=[{"role": "user", "text": "hello"}],
+        context=ChatContextHandle(cache_name="cached/123", cache_status="ready", cache_kind="pdf"),
+    )
+    service._sessions[session.session_id] = session
+    service._latest_session_by_key[(session.article_id, session.model_key)] = session.session_id
+    service._contexts[(session.article_id, session.model_name)] = session.context
+    service._persist_state()
+
+    result = service.delete_article_state("article-delete")
+
+    assert result == {"sessions_removed": 1, "contexts_removed": 1}
+    assert service.get_session(article_id="article-delete", model_key="flash")["session_id"] == ""
+    restored = ChatService(
+        settings=settings,
+        storage_manager=storage,
+        llm_processor=LLMProcessor(settings),
+    )
+    assert restored.get_session(article_id="article-delete", model_key="flash")["session_id"] == ""

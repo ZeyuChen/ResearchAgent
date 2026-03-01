@@ -28,3 +28,27 @@ def test_storage_manager_persists_metadata_and_article() -> None:
         assert stored.metadata_path.exists()
         assert stored.article_path.exists()
         assert manager.load_article(metadata["article_id"]) is not None
+
+
+def test_storage_manager_deletes_article_directory() -> None:
+    with TemporaryDirectory() as temp_dir:
+        manager = StorageManager(Path(temp_dir))
+        item = ResearchItem(
+            source="arxiv",
+            title="Delete Me",
+            summary="A deletable paper.",
+            source_url="https://example.com/delete",
+            published_at="2026-03-01T09:00:00",
+            identifier="delete-id",
+        )
+
+        stored = manager.persist_item(item, {"source.html": b"<html></html>", "source.pdf": b"%PDF-1.4"})
+        manager.write_article(stored, "# Delete")
+        article_id = json.loads(stored.metadata_path.read_text(encoding="utf-8"))["article_id"]
+
+        deleted = manager.delete_article(article_id)
+
+        assert deleted is not None
+        assert deleted["article_id"] == article_id
+        assert stored.item_dir.exists() is False
+        assert manager.load_article(article_id) is None
