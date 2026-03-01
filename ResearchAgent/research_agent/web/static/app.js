@@ -2,7 +2,7 @@ const state = {
   library: [],
   topics: [],
   activeArticleId: null,
-  selectedTopic: "all",
+  selectedFolder: "all",
   search: "",
   activeJobId: null,
   activeJobStartedAt: 0,
@@ -38,7 +38,7 @@ const nodes = {
   libraryGrid: document.getElementById("libraryGrid"),
   articleList: document.getElementById("articleList"),
   articleCount: document.getElementById("articleCount"),
-  topicFilters: document.getElementById("topicFilters"),
+  folderTree: document.getElementById("folderTree"),
   searchInput: document.getElementById("searchInput"),
   emptyState: document.getElementById("emptyState"),
   articleView: document.getElementById("articleView"),
@@ -100,7 +100,7 @@ async function refreshLibrary() {
   if (!state.chatArticleId && state.library.length) {
     state.chatArticleId = state.activeArticleId || state.library[0].article_id;
   }
-  renderFilters();
+  renderFolders();
   renderArticleList();
   renderLibraryBrowser();
   renderChatSidebar();
@@ -161,32 +161,89 @@ function setWorkspace(mode) {
   renderWorkspace();
 }
 
-function renderFilters() {
-  nodes.topicFilters.innerHTML = "";
-  nodes.topicFilters.appendChild(createChip("全部", state.selectedTopic === "all", () => {
-    state.selectedTopic = "all";
-    renderFilters();
-    renderArticleList();
-    renderLibraryBrowser();
-  }));
+function renderFolders() {
+  nodes.folderTree.innerHTML = "";
+
+  const typeSection = document.createElement("div");
+  typeSection.className = "folder-section";
+  const typeTitle = document.createElement("div");
+  typeTitle.className = "folder-section-title";
+  typeTitle.textContent = "资料类型";
+  typeSection.appendChild(typeTitle);
+
+  buildPrimaryFolders().forEach((entry) => {
+    typeSection.appendChild(createFolderButton(entry));
+  });
+  nodes.folderTree.appendChild(typeSection);
+
+  if (!state.topics.length) {
+    return;
+  }
+
+  const topicSection = document.createElement("div");
+  topicSection.className = "folder-section";
+  const topicTitle = document.createElement("div");
+  topicTitle.className = "folder-section-title";
+  topicTitle.textContent = "主题文件夹";
+  topicSection.appendChild(topicTitle);
 
   state.topics.forEach((topic) => {
-    nodes.topicFilters.appendChild(createChip(`${topic.name} (${topic.count})`, state.selectedTopic === topic.name, () => {
-      state.selectedTopic = topic.name;
-      renderFilters();
-      renderArticleList();
-      renderLibraryBrowser();
+    topicSection.appendChild(createFolderButton({
+      key: `topic:${topic.name}`,
+      label: topic.name,
+      count: topic.count,
+      kind: "topic",
     }));
   });
+  nodes.folderTree.appendChild(topicSection);
 }
 
-function createChip(label, active, onClick) {
+function buildPrimaryFolders() {
+  const paperCount = state.library.filter((article) => isPdfBackedArticle(article)).length;
+  const webCount = state.library.filter((article) => isHtmlOnlyArticle(article)).length;
+  const arxivCount = state.library.filter((article) => String(article.source || "").includes("arxiv")).length;
+  return [
+    { key: "all", label: "全部文库", count: state.library.length, kind: "root" },
+    { key: "papers", label: "PDF 论文", count: paperCount, kind: "paper" },
+    { key: "web", label: "网页 / HTML", count: webCount, kind: "web" },
+    { key: "arxiv", label: "arXiv", count: arxivCount, kind: "arxiv" },
+  ];
+}
+
+function createFolderButton(entry) {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `chip ${active ? "active" : ""}`;
-  button.textContent = label;
-  button.addEventListener("click", onClick);
+  button.className = `folder-button ${state.selectedFolder === entry.key ? "active" : ""}`;
+  button.innerHTML = `
+    <span class="folder-button-main">
+      <span class="folder-glyph">${folderGlyph(entry.kind)}</span>
+      <span class="folder-label">${escapeHtml(entry.label)}</span>
+    </span>
+    <span class="folder-count">${entry.count}</span>
+  `;
+  button.addEventListener("click", () => {
+    state.selectedFolder = entry.key;
+    renderFolders();
+    renderArticleList();
+    renderLibraryBrowser();
+  });
   return button;
+}
+
+function folderGlyph(kind) {
+  if (kind === "paper") {
+    return "▣";
+  }
+  if (kind === "web") {
+    return "◫";
+  }
+  if (kind === "arxiv") {
+    return "◇";
+  }
+  if (kind === "topic") {
+    return "▾";
+  }
+  return "▤";
 }
 
 function renderArticleList() {
@@ -207,13 +264,11 @@ function renderArticleList() {
     button.type = "button";
     button.className = `article-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
-    const tags = (article.display_tags || []).slice(0, 3)
-      .map((tag) => `<span class="card-tag">${escapeHtml(tag)}</span>`)
-      .join("");
+    const pathLabel = buildArticleFolderPath(article);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
       <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>
-      ${tags ? `<div class="card-tags">${tags}</div>` : ""}
+      <div class="card-path">${escapeHtml(pathLabel)}</div>
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>
         <span>${compactUsd(usage.estimated_cost_usd || 0)}</span>
@@ -241,12 +296,14 @@ function renderLibraryBrowser() {
     button.type = "button";
     button.className = `library-browser-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
+    const pathLabel = buildArticleFolderPath(article);
     const tags = (article.display_tags || []).slice(0, 4)
       .map((tag) => `<span class="card-tag">${escapeHtml(tag)}</span>`)
       .join("");
     button.innerHTML = `
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
       <div class="library-browser-summary">${escapeHtml((article.summary || "").slice(0, 220))}</div>
+      <div class="library-browser-path">${escapeHtml(pathLabel)}</div>
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       <div class="library-browser-footer">
         <span>${compactTokens(usage.total_tokens || 0)} · ${compactUsd(usage.estimated_cost_usd || 0)}</span>
@@ -260,11 +317,50 @@ function renderLibraryBrowser() {
 
 function getFilteredArticles() {
   return state.library.filter((article) => {
-    const topicMatch = state.selectedTopic === "all" || (article.display_tags || []).includes(state.selectedTopic);
+    const folderMatch = matchesFolder(article, state.selectedFolder);
     const textBlob = `${article.title || ""} ${article.summary || ""}`.toLowerCase();
     const searchMatch = !state.search || textBlob.includes(state.search.toLowerCase());
-    return topicMatch && searchMatch;
+    return folderMatch && searchMatch;
   });
+}
+
+function matchesFolder(article, folderKey) {
+  if (!folderKey || folderKey === "all") {
+    return true;
+  }
+  if (folderKey === "papers") {
+    return isPdfBackedArticle(article);
+  }
+  if (folderKey === "web") {
+    return isHtmlOnlyArticle(article);
+  }
+  if (folderKey === "arxiv") {
+    return String(article.source || "").includes("arxiv");
+  }
+  if (folderKey.startsWith("topic:")) {
+    const topicName = folderKey.slice("topic:".length);
+    return (article.display_tags || []).includes(topicName);
+  }
+  return true;
+}
+
+function isPdfBackedArticle(article) {
+  return (article.source_files || []).some((entry) => entry.name === "source.pdf");
+}
+
+function isHtmlOnlyArticle(article) {
+  const hasPdf = isPdfBackedArticle(article);
+  const hasHtml = (article.source_files || []).some((entry) => entry.name === "source.html");
+  return !hasPdf && hasHtml;
+}
+
+function buildArticleFolderPath(article) {
+  const segments = [isPdfBackedArticle(article) ? "PDF 论文" : "网页 / HTML"];
+  const topic = (article.display_tags || [])[0];
+  if (topic) {
+    segments.push(topic);
+  }
+  return segments.join(" / ");
 }
 
 async function loadArticle(articleId, nextWorkspace = "reader") {

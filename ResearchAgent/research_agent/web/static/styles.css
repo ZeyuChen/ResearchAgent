@@ -308,6 +308,86 @@ body.layout-resizing {
   margin-top: 14px;
 }
 
+.folder-tree {
+  margin-top: 8px;
+  display: grid;
+  gap: 12px;
+  max-height: 264px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.folder-section {
+  display: grid;
+  gap: 4px;
+}
+
+.folder-section-title {
+  padding: 0 10px 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.folder-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.folder-button:hover {
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+}
+
+.folder-button.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(17, 24, 39, 0.06);
+}
+
+.folder-button-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-glyph {
+  width: 16px;
+  flex: 0 0 auto;
+  color: #6d63ff;
+  font-size: 0.8rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.folder-label {
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-count {
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
 .chip-list,
 .badge-row,
 .inline-actions,
@@ -501,6 +581,14 @@ body.layout-resizing {
   font-weight: 600;
 }
 
+.card-path {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
 .card-mini {
   margin-top: 8px;
   display: flex;
@@ -582,6 +670,12 @@ body.layout-resizing {
   -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.library-browser-path {
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 600;
 }
 
 .library-browser-footer {
