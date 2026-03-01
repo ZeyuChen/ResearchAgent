@@ -384,7 +384,7 @@ function renderLibraryBrowser() {
     const tags = buildTagMarkup(article.display_tags || [], 4);
     button.innerHTML = `
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
-      ${isWebOnly ? "" : `<div class="library-browser-summary">${escapeHtml((article.summary || "").slice(0, 220))}</div>`}
+      ${isWebOnly ? "" : `<div class="library-browser-summary">${escapeHtml(article.summary || "")}</div>`}
       <div class="library-browser-path">${escapeHtml(pathLabel)}</div>
       ${arxivId ? `<div class="library-browser-arxiv">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
