@@ -48,6 +48,9 @@ class Settings:
     max_arxiv_results: int = 20
     gemini_model: str = "gemini-3-flash-preview"
     secondary_filter_model: str = "gemini-3-flash-preview"
+    chat_default_model: str = "gemini-3-flash-preview"
+    chat_advanced_model: str = "gemini-3.1-pro-preview"
+    chat_cache_ttl: str = "3600s"
     enable_llm_filter: bool = False
     tracked_github_repos: list[str] = field(default_factory=lambda: list(DEFAULT_GITHUB_REPOS))
     keywords: list[str] = field(default_factory=lambda: list(DEFAULT_KEYWORDS))
@@ -71,6 +74,9 @@ class Settings:
             max_arxiv_results=int(os.getenv("RESEARCH_AGENT_MAX_ARXIV_RESULTS", "20")),
             gemini_model=os.getenv("RESEARCH_AGENT_GEMINI_MODEL", "gemini-3-flash-preview"),
             secondary_filter_model=os.getenv("RESEARCH_AGENT_GEMINI_FILTER_MODEL", "gemini-3-flash-preview"),
+            chat_default_model=os.getenv("RESEARCH_AGENT_CHAT_DEFAULT_MODEL", "gemini-3-flash-preview"),
+            chat_advanced_model=os.getenv("RESEARCH_AGENT_CHAT_ADVANCED_MODEL", "gemini-3.1-pro-preview"),
+            chat_cache_ttl=os.getenv("RESEARCH_AGENT_CHAT_CACHE_TTL", "3600s"),
             enable_llm_filter=os.getenv("RESEARCH_AGENT_ENABLE_LLM_FILTER", "false").lower() in {"1", "true", "yes"},
         )
 

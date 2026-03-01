@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from research_agent.config import Settings
 from research_agent.services.arxiv_source_gallery import ArxivSourceGalleryService
+from research_agent.services.chat_service import ChatService
 from research_agent.services.job_manager import JobManager
 from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import extract_pdf_page_refs, inject_pdf_page_links, render_markdown
@@ -27,6 +28,13 @@ class URLIngestRequest(BaseModel):
     url: str
 
 
+class ChatMessageRequest(BaseModel):
+    article_id: str
+    message: str
+    model: str = "flash"
+    session_id: str | None = None
+
+
 def build_display_tags(article: dict) -> list[str]:
     return [str(tag).strip() for tag in article.get("topic_tags", []) if str(tag).strip()][:6]
 
@@ -40,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     storage_manager = StorageManager(app_settings.data_dir)
     llm_processor = LLMProcessor(app_settings)
     manual_ingest = ManualIngestService(app_settings, storage_manager, llm_processor)
+    chat_service = ChatService(app_settings, storage_manager, llm_processor)
     pdf_preview_service = PDFPreviewService(app_settings.data_dir)
     arxiv_source_gallery_service = ArxivSourceGalleryService(app_settings.data_dir)
     job_manager = JobManager()
@@ -61,6 +70,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/api/chat/options")
+    async def chat_options() -> dict:
+        return {
+            "available": chat_service.available(),
+            "default_model_key": chat_service.default_model_key(),
+            "models": chat_service.model_catalog(),
+        }
 
     def infer_arxiv_id(article: dict) -> str:
         for candidate in (
@@ -141,6 +158,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not article:
             raise HTTPException(status_code=404, detail="Article not found")
         return build_article_payload(article)
+
+    @app.post("/api/chat/messages")
+    async def chat_messages(payload: ChatMessageRequest) -> dict:
+        article = storage_manager.load_article(payload.article_id)
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        try:
+            return chat_service.send_message(
+                article=article,
+                article_id=payload.article_id,
+                message=payload.message,
+                model_key=payload.model,
+                session_id=payload.session_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def start_job(job_kind: str, worker, filename: str = "") -> dict:
         job = job_manager.create_job(job_kind, filename=filename)

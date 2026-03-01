@@ -17,6 +17,13 @@ LOGGER = logging.getLogger(__name__)
 GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M = 0.50
 GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M = 3.00
 GEMINI_3_FLASH_PRICING_URL = "https://ai.google.dev/pricing"
+MODEL_PRICING = {
+    "gemini-3-flash-preview": {
+        "input_per_1m": GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M,
+        "output_per_1m": GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M,
+        "pricing_basis": "Google AI Studio Gemini 3 Flash Preview standard pricing (text/image/video input, text output)",
+    },
+}
 MAX_WEB_SUMMARY_CHARS = 300
 ProgressCallback = Callable[[int, str], None]
 
@@ -83,7 +90,7 @@ class LLMProcessor:
                     response_mime_type="application/json",
                 ),
             )
-            usage = self._extract_usage(response)
+            usage = self.extract_usage(response, self.settings.gemini_model)
             summary = self._normalize_web_summary(self._extract_summary_text(response.text or ""))
             if not summary:
                 summary = self._fallback_article_summary(article_markdown, item)
@@ -124,7 +131,7 @@ class LLMProcessor:
                     response_mime_type="application/json",
                 ),
             )
-            usage = self._extract_usage(response)
+            usage = self.extract_usage(response, self.settings.gemini_model)
             tags = self._extract_topic_tags(response.text or "")
             if not tags:
                 tags = self._fallback_topic_tags(seed)
@@ -178,7 +185,7 @@ class LLMProcessor:
                 max_output_tokens=8192,
             ),
         )
-        usage = self._extract_usage(response)
+        usage = self.extract_usage(response, self.settings.gemini_model)
         return (response.text or "").strip() or self._fallback_article(item), usage
 
     def _generate_from_html(
@@ -211,7 +218,7 @@ class LLMProcessor:
                 max_output_tokens=8192,
             ),
         )
-        usage = self._extract_usage(response)
+        usage = self.extract_usage(response, self.settings.gemini_model)
         return (response.text or "").strip() or self._fallback_article(item), usage
 
     def _build_webpage_content_parts(
@@ -401,24 +408,30 @@ class LLMProcessor:
                 tags.append(candidate)
         return tags[:6]
 
-    def _extract_usage(self, response: types.GenerateContentResponse) -> dict:
+    def extract_usage(self, response: types.GenerateContentResponse, model_name: str) -> dict:
         usage = response.usage_metadata
         prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
         output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
         total_tokens = int(getattr(usage, "total_token_count", prompt_tokens + output_tokens) or 0)
-        input_cost = prompt_tokens / 1_000_000 * GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M
-        output_cost = output_tokens / 1_000_000 * GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M
+        pricing = MODEL_PRICING.get(model_name, {})
+        input_per_1m = float(pricing.get("input_per_1m", 0.0) or 0.0)
+        output_per_1m = float(pricing.get("output_per_1m", 0.0) or 0.0)
+        input_cost = prompt_tokens / 1_000_000 * input_per_1m
+        output_cost = output_tokens / 1_000_000 * output_per_1m
         return {
-            "model": self.settings.gemini_model,
+            "model": model_name,
             "prompt_tokens": prompt_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "input_cost_usd": round(input_cost, 6),
             "output_cost_usd": round(output_cost, 6),
             "estimated_cost_usd": round(input_cost + output_cost, 6),
-            "pricing_basis": "Google AI Studio Gemini 3 Flash Preview standard pricing (text/image/video input, text output)",
+            "pricing_basis": str(pricing.get("pricing_basis", "")),
             "pricing_reference_url": GEMINI_3_FLASH_PRICING_URL,
         }
+
+    def _extract_usage(self, response: types.GenerateContentResponse) -> dict:
+        return self.extract_usage(response, self.settings.gemini_model)
 
     @staticmethod
     def _empty_usage() -> dict:

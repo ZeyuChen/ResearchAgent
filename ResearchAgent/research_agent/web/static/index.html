@@ -33,31 +33,56 @@
 
       <div class="layout">
         <aside id="sidebar" class="sidebar">
-          <section class="panel">
-            <button id="openIngestModal" class="primary-button new-source-button" type="button">新增资料</button>
-
-            <label class="field-stack">
-              <span>搜索</span>
-              <input id="searchInput" type="search" placeholder="搜索标题、摘要、关键词" />
-            </label>
-
-            <div class="filter-block">
-              <div class="block-title">主题标签</div>
-              <div id="topicFilters" class="chip-list"></div>
+          <section class="panel nav-panel">
+            <button id="openIngestModal" class="primary-button new-source-button" type="button">导入资料</button>
+            <div class="workspace-nav" id="workspaceNav">
+              <button class="workspace-button active" data-workspace="library" type="button">论文 Library</button>
+              <button class="workspace-button" data-workspace="chat" type="button">问大模型</button>
             </div>
           </section>
 
-          <section class="panel list-panel">
-            <div class="list-head">
-              <div class="block-title">论文 / 文章</div>
-              <span id="articleCount" class="counter-pill">0</span>
-            </div>
-            <div id="articleList" class="article-list"></div>
-          </section>
+          <div id="librarySidebar" class="sidebar-stack">
+            <section class="panel">
+              <label class="field-stack">
+                <span>搜索</span>
+                <input id="searchInput" type="search" placeholder="搜索标题、摘要、关键词" />
+              </label>
+
+              <div class="filter-block">
+                <div class="block-title">主题标签</div>
+                <div id="topicFilters" class="chip-list"></div>
+              </div>
+            </section>
+
+            <section class="panel list-panel">
+              <div class="list-head">
+                <div class="block-title">论文 / 文章</div>
+                <span id="articleCount" class="counter-pill">0</span>
+              </div>
+              <div id="articleList" class="article-list"></div>
+            </section>
+          </div>
+
+          <div id="chatSidebar" class="sidebar-stack hidden">
+            <section class="panel chat-side-panel">
+              <label class="field-stack">
+                <span>关联论文</span>
+                <select id="chatArticleSelect"></select>
+              </label>
+
+              <div class="filter-block">
+                <div class="block-title">模型</div>
+                <div id="chatModelPicker" class="model-picker"></div>
+              </div>
+
+              <button id="newChatButton" class="secondary-button new-chat-button" type="button">新建对话</button>
+              <div id="chatContextHint" class="sidebar-note">对 arXiv / PDF 条目会优先准备原文缓存上下文。</div>
+            </section>
+          </div>
         </aside>
 
         <main class="main-stage">
-          <section class="hero-bar">
+          <section id="libraryHeader" class="hero-bar">
             <div>
               <h2 id="heroTitle">选择左侧论文开始阅读</h2>
             </div>
@@ -109,6 +134,33 @@
               <iframe id="pdfViewer" name="pdf-viewer" class="pdf-frame" title="原始 PDF 对照窗口"></iframe>
               <div id="pdfEmpty" class="pdf-empty hidden">当前文章没有可用的 PDF 源文件。</div>
             </aside>
+          </section>
+
+          <section id="chatView" class="panel chat-shell hidden">
+            <div class="chat-topbar">
+              <div>
+                <div class="mini-title">论文问答</div>
+                <h3 id="chatTitle">选择一篇论文后开始提问</h3>
+                <div id="chatMeta" class="chat-meta">默认使用 Gemini 3 Flash Preview。</div>
+              </div>
+              <button id="chatResetButton" class="secondary-button" type="button">新建对话</button>
+            </div>
+
+            <div id="chatMessages" class="chat-messages">
+              <div class="chat-empty">选择论文，输入你的问题，系统会基于原文和解析结果继续追问式讲解。</div>
+            </div>
+
+            <form id="chatComposer" class="chat-composer">
+              <textarea
+                id="chatInput"
+                rows="3"
+                placeholder="例如：这篇论文最核心的算法创新是什么？和现有方法相比真正提升在哪里？"
+              ></textarea>
+              <div class="chat-actions">
+                <div id="chatStatus" class="chat-status">就绪</div>
+                <button id="chatSendButton" class="primary-button" type="submit">发送</button>
+              </div>
+            </form>
           </section>
         </main>
       </div>

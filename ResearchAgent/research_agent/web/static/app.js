@@ -7,20 +7,32 @@ const state = {
   activeJobId: null,
   activeJobStartedAt: 0,
   sidebarCollapsed: false,
+  workspace: "library",
   viewMode: "both",
   articleHasPdf: false,
+  chatOptions: { available: false, default_model_key: "flash", models: [] },
+  chatModelKey: "flash",
+  chatArticleId: null,
+  chatSessionId: null,
+  chatMessages: [],
+  chatPending: false,
+  chatCache: null,
 };
 
 const nodes = {
   appShell: document.getElementById("appShell"),
   sidebarToggle: document.getElementById("sidebarToggle"),
   openIngestModal: document.getElementById("openIngestModal"),
+  workspaceNav: document.getElementById("workspaceNav"),
+  librarySidebar: document.getElementById("librarySidebar"),
+  chatSidebar: document.getElementById("chatSidebar"),
   articleList: document.getElementById("articleList"),
   articleCount: document.getElementById("articleCount"),
   topicFilters: document.getElementById("topicFilters"),
   searchInput: document.getElementById("searchInput"),
   emptyState: document.getElementById("emptyState"),
   articleView: document.getElementById("articleView"),
+  libraryHeader: document.getElementById("libraryHeader"),
   heroTitle: document.getElementById("heroTitle"),
   metaBadges: document.getElementById("metaBadges"),
   viewToggle: document.getElementById("viewToggle"),
@@ -52,10 +64,24 @@ const nodes = {
   progressHint: document.getElementById("progressHint"),
   ingestModal: document.getElementById("ingestModal"),
   closeIngestModal: document.getElementById("closeIngestModal"),
+  chatArticleSelect: document.getElementById("chatArticleSelect"),
+  chatModelPicker: document.getElementById("chatModelPicker"),
+  newChatButton: document.getElementById("newChatButton"),
+  chatContextHint: document.getElementById("chatContextHint"),
+  chatView: document.getElementById("chatView"),
+  chatTitle: document.getElementById("chatTitle"),
+  chatMeta: document.getElementById("chatMeta"),
+  chatMessages: document.getElementById("chatMessages"),
+  chatComposer: document.getElementById("chatComposer"),
+  chatInput: document.getElementById("chatInput"),
+  chatStatus: document.getElementById("chatStatus"),
+  chatSendButton: document.getElementById("chatSendButton"),
+  chatResetButton: document.getElementById("chatResetButton"),
 };
 
 async function bootstrap() {
-  await refreshLibrary();
+  await Promise.all([refreshLibrary(), refreshChatOptions()]);
+  renderWorkspace();
 }
 
 async function refreshLibrary() {
@@ -63,13 +89,55 @@ async function refreshLibrary() {
   const payload = await response.json();
   state.library = payload.articles || [];
   state.topics = payload.topics || [];
+  if (!state.chatArticleId && state.library.length) {
+    state.chatArticleId = state.activeArticleId || state.library[0].article_id;
+  }
   renderFilters();
   renderArticleList();
+  renderChatSidebar();
+  renderChatView();
+}
+
+async function refreshChatOptions() {
+  try {
+    const response = await fetch("/api/chat/options");
+    const payload = await response.json();
+    if (response.ok) {
+      state.chatOptions = payload;
+      state.chatModelKey = payload.default_model_key || "flash";
+    }
+  } catch (error) {
+    state.chatOptions = { available: false, default_model_key: "flash", models: [] };
+  }
+  renderChatSidebar();
+  renderChatView();
+}
+
+function renderWorkspace() {
+  nodes.workspaceNav.querySelectorAll(".workspace-button").forEach((button) => {
+    button.classList.toggle("active", button.dataset.workspace === state.workspace);
+  });
+
+  const isLibrary = state.workspace === "library";
+  nodes.librarySidebar.classList.toggle("hidden", !isLibrary);
+  nodes.chatSidebar.classList.toggle("hidden", isLibrary);
+  nodes.libraryHeader.classList.toggle("hidden", !isLibrary);
+  nodes.emptyState.classList.toggle("hidden", !isLibrary || !nodes.articleView.classList.contains("hidden"));
+  if (!isLibrary && nodes.articleView.classList.contains("hidden")) {
+    nodes.emptyState.classList.add("hidden");
+  }
+  nodes.articleView.classList.toggle("hidden", !isLibrary || !state.activeArticleId);
+  nodes.chatView.classList.toggle("hidden", isLibrary);
+  renderChatView();
+}
+
+function setWorkspace(mode) {
+  state.workspace = mode === "chat" ? "chat" : "library";
+  renderWorkspace();
 }
 
 function renderFilters() {
   nodes.topicFilters.innerHTML = "";
-
   nodes.topicFilters.appendChild(createChip("全部", state.selectedTopic === "all", () => {
     state.selectedTopic = "all";
     renderFilters();
@@ -140,7 +208,9 @@ function getFilteredArticles() {
 
 async function loadArticle(articleId) {
   state.activeArticleId = articleId;
+  state.chatArticleId = articleId;
   renderArticleList();
+  renderChatSidebar();
 
   const response = await fetch(`/api/articles/${articleId}`);
   if (!response.ok) {
@@ -153,11 +223,13 @@ async function loadArticle(articleId) {
 
 function renderArticle(article) {
   state.activeArticleId = article.article_id;
+  state.chatArticleId = article.article_id;
   state.articleHasPdf = Boolean(article.pdf_source_url);
   if (!state.articleHasPdf && state.viewMode !== "analysis") {
     state.viewMode = "analysis";
   }
   renderArticleList();
+  renderChatSidebar();
 
   nodes.emptyState.classList.add("hidden");
   nodes.articleView.classList.remove("hidden");
@@ -172,15 +244,18 @@ function renderArticle(article) {
   nodes.articleBody.innerHTML = article.rendered_html || "<p>暂无正文。</p>";
   renderPdfPane(article);
   renderVisualGallery(article);
+  if (state.workspace === "chat") {
+    renderChatView();
+  }
 }
 
 function renderMetaBadges(article) {
   nodes.metaBadges.innerHTML = "";
   (article.display_tags || []).slice(0, 6).forEach((value) => {
-      const badge = document.createElement("span");
-      badge.className = "badge";
-      badge.textContent = `#${value}`;
-      nodes.metaBadges.appendChild(badge);
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = `#${value}`;
+    nodes.metaBadges.appendChild(badge);
   });
 }
 
@@ -275,9 +350,7 @@ function renderVisualGallery(article) {
         <img src="${escapeHtml(figure.url)}" alt="${escapeHtml(figure.title || figure.source_name || "论文配图")}" />
         <span>${escapeHtml(figure.title || figure.source_name || "论文配图")}</span>
       `;
-      button.addEventListener("click", () => {
-        openLightbox(figure.url, figure.title || figure.source_name || "论文配图");
-      });
+      button.addEventListener("click", () => openLightbox(figure.url, figure.title || figure.source_name || "论文配图"));
       nodes.pdfPreviewGallery.appendChild(button);
     });
     return;
@@ -301,6 +374,205 @@ function renderVisualGallery(article) {
     button.addEventListener("click", () => openPdfAt(pdfUrl, preview.page));
     nodes.pdfPreviewGallery.appendChild(button);
   });
+}
+
+function renderChatSidebar() {
+  renderChatArticleOptions();
+  renderChatModelOptions();
+  updateChatContextHint();
+}
+
+function renderChatArticleOptions() {
+  if (!nodes.chatArticleSelect) {
+    return;
+  }
+  const selected = state.chatArticleId || state.activeArticleId || (state.library[0] && state.library[0].article_id) || "";
+  if (selected) {
+    state.chatArticleId = selected;
+  }
+  nodes.chatArticleSelect.innerHTML = "";
+  state.library.forEach((article) => {
+    const option = document.createElement("option");
+    option.value = article.article_id;
+    option.textContent = article.title || "Untitled";
+    option.selected = article.article_id === state.chatArticleId;
+    nodes.chatArticleSelect.appendChild(option);
+  });
+  nodes.chatArticleSelect.disabled = !state.library.length;
+}
+
+function renderChatModelOptions() {
+  if (!nodes.chatModelPicker) {
+    return;
+  }
+  const options = state.chatOptions.models || [];
+  nodes.chatModelPicker.innerHTML = "";
+  options.forEach((model) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `model-chip ${model.key === state.chatModelKey ? "active" : ""}`;
+    button.textContent = model.label;
+    button.title = model.description || "";
+    button.addEventListener("click", () => {
+      state.chatModelKey = model.key;
+      resetChatSession();
+      renderChatSidebar();
+      renderChatView();
+    });
+    nodes.chatModelPicker.appendChild(button);
+  });
+}
+
+function renderChatView() {
+  const currentArticle = getChatArticle();
+  const currentModel = getChatModel();
+  nodes.chatTitle.textContent = currentArticle ? `围绕《${currentArticle.title || "Untitled"}》继续追问` : "选择一篇论文后开始提问";
+  nodes.chatMeta.textContent = currentModel
+    ? `${currentModel.label} · ${describeCache(state.chatCache)}`
+    : "默认使用 Gemini 3 Flash Preview。";
+  nodes.chatComposer.classList.toggle("disabled", !currentArticle || !state.chatOptions.available);
+  nodes.chatInput.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
+  nodes.chatSendButton.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
+
+  if (!state.chatOptions.available) {
+    nodes.chatStatus.textContent = "Gemini API 尚未配置";
+  } else if (state.chatPending) {
+    nodes.chatStatus.textContent = "Gemini 正在回答，首次会准备上下文缓存";
+  } else {
+    nodes.chatStatus.textContent = currentArticle ? "就绪" : "请选择一篇论文";
+  }
+
+  renderChatMessages();
+}
+
+function renderChatMessages() {
+  nodes.chatMessages.innerHTML = "";
+  if (!state.chatMessages.length) {
+    const empty = document.createElement("div");
+    empty.className = "chat-empty";
+    empty.textContent = state.chatArticleId
+      ? "可以直接追问算法细节、关键实验、工程实现，系统会优先引用原文上下文。"
+      : "先选择一篇论文，再开始提问。";
+    nodes.chatMessages.appendChild(empty);
+    return;
+  }
+
+  state.chatMessages.forEach((message) => {
+    const row = document.createElement("div");
+    row.className = `chat-message ${message.role}`;
+    const meta = buildChatMessageMeta(message);
+    row.innerHTML = `
+      <div class="chat-bubble">
+        <div class="chat-role">${message.role === "user" ? "你" : "ResearchAgent"}</div>
+        <div class="chat-text">${escapeHtml(message.text || "")}</div>
+        ${meta ? `<div class="chat-bubble-meta">${meta}</div>` : ""}
+      </div>
+    `;
+    nodes.chatMessages.appendChild(row);
+  });
+  nodes.chatMessages.scrollTop = nodes.chatMessages.scrollHeight;
+}
+
+function buildChatMessageMeta(message) {
+  if (message.role !== "assistant" || !message.usage) {
+    return "";
+  }
+  const usage = message.usage;
+  const pieces = [];
+  if (usage.prompt_tokens) {
+    pieces.push(`输入 ${formatNumber(usage.prompt_tokens)}`);
+  }
+  if (usage.output_tokens) {
+    pieces.push(`输出 ${formatNumber(usage.output_tokens)}`);
+  }
+  if (usage.model) {
+    pieces.push(usage.model);
+  }
+  return pieces.join(" · ");
+}
+
+function updateChatContextHint() {
+  const article = getChatArticle();
+  if (!article) {
+    nodes.chatContextHint.textContent = "对 arXiv / PDF 条目会优先准备原文缓存上下文。";
+    return;
+  }
+  const hasPdf = (article.source_files || []).some((entry) => entry.name === "source.pdf");
+  nodes.chatContextHint.textContent = hasPdf
+    ? "当前条目包含原始 PDF，聊天会优先用 Gemini cache 固定原文上下文。"
+    : "当前条目没有原始 PDF，聊天会优先使用已生成的解析正文作为上下文。";
+}
+
+function getChatArticle() {
+  return state.library.find((article) => article.article_id === state.chatArticleId) || null;
+}
+
+function getChatModel() {
+  return (state.chatOptions.models || []).find((model) => model.key === state.chatModelKey) || null;
+}
+
+function describeCache(cache) {
+  if (!cache) {
+    return "等待提问后建立上下文";
+  }
+  if (cache.status === "ready" && cache.kind === "pdf") {
+    return "PDF cache 已就绪";
+  }
+  if (cache.status === "ready" && cache.kind === "article") {
+    return "解析正文 cache 已就绪";
+  }
+  if (cache.status === "uploaded-file") {
+    return "已上传 PDF，上下文复用中";
+  }
+  return "使用内联上下文";
+}
+
+function resetChatSession() {
+  state.chatSessionId = null;
+  state.chatMessages = [];
+  state.chatCache = null;
+}
+
+async function sendChatMessage() {
+  const article = getChatArticle();
+  if (!article) {
+    renderChatView();
+    return;
+  }
+  const message = nodes.chatInput.value.trim();
+  if (!message) {
+    nodes.chatStatus.textContent = "请输入问题";
+    return;
+  }
+
+  state.chatPending = true;
+  renderChatView();
+
+  try {
+    const response = await fetch("/api/chat/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        article_id: article.article_id,
+        message,
+        model: state.chatModelKey,
+        session_id: state.chatSessionId,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "聊天请求失败");
+    }
+    state.chatSessionId = payload.session_id;
+    state.chatMessages = payload.messages || [];
+    state.chatCache = payload.cache || null;
+    nodes.chatInput.value = "";
+  } catch (error) {
+    nodes.chatStatus.textContent = error.message || "聊天请求失败";
+  } finally {
+    state.chatPending = false;
+    renderChatView();
+  }
 }
 
 async function startUrlIngest() {
@@ -408,6 +680,7 @@ async function pollJob(jobId) {
     if (payload.status === "completed") {
       await refreshLibrary();
       renderArticle(payload.article);
+      setWorkspace("library");
       setIntakeBusy(false);
       return;
     }
@@ -636,13 +909,47 @@ nodes.ingestUrlInput.addEventListener("keydown", (event) => {
     startUrlIngest();
   }
 });
+
 nodes.sidebarToggle.addEventListener("click", toggleSidebar);
+nodes.workspaceNav.addEventListener("click", (event) => {
+  const button = event.target.closest(".workspace-button");
+  if (!button) {
+    return;
+  }
+  setWorkspace(button.dataset.workspace);
+});
+
 nodes.viewToggle.addEventListener("click", (event) => {
   const button = event.target.closest(".view-toggle-button");
   if (!button) {
     return;
   }
   setViewMode(button.dataset.mode);
+});
+
+nodes.chatArticleSelect.addEventListener("change", (event) => {
+  state.chatArticleId = event.target.value;
+  resetChatSession();
+  renderChatSidebar();
+  renderChatView();
+});
+
+nodes.newChatButton.addEventListener("click", () => {
+  resetChatSession();
+  renderChatView();
+});
+
+nodes.chatResetButton.addEventListener("click", () => {
+  resetChatSession();
+  renderChatView();
+});
+
+nodes.chatComposer.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (state.chatPending) {
+    return;
+  }
+  await sendChatMessage();
 });
 
 bindUploadInteractions();
