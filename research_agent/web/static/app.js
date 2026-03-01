@@ -1838,7 +1838,7 @@ function addTagsFromInput() {
   }
   const incoming = raw
     .split(/[,，\n]/)
-    .map((entry) => " ".join(entry.split()).trim().replace(/^#/, ""))
+    .map((entry) => String(entry || "").replace(/\s+/g, " ").trim().replace(/^#/, ""))
     .filter(Boolean);
   if (!incoming.length) {
     nodes.tagInput.value = "";
