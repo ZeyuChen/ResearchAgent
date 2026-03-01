@@ -824,8 +824,9 @@ input {
   overflow-x: auto;
 }
 
-.hidden {
-  display: none;
+.hidden,
+.lightbox.hidden {
+  display: none !important;
 }
 
 body.lightbox-open {
