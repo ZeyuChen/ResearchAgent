@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from google import genai
 from google.genai import types
@@ -229,7 +229,122 @@ class LLMProcessor:
         progress_callback: ProgressCallback | None = None,
     ) -> tuple[str, dict]:
         self._notify(progress_callback, 52, "正在上传 PDF 到 Gemini File API。")
-        uploaded_file = self.client.files.upload(file=str(pdf_path))
+        uploaded_file = self._upload_file_with_retry(pdf_path, "PDF")
+        try:
+            return self._generate_from_pdf_chunked(
+                uploaded_file=uploaded_file,
+                item=item,
+                progress_callback=progress_callback,
+            )
+        except Exception as exc:
+            LOGGER.warning("Gemini chunked PDF generation failed for %s: %s", item.title, exc)
+            self._notify(progress_callback, 70, "分块翻译未成功，回退到单次全文生成。")
+
+        return self._generate_from_pdf_single_pass(
+            uploaded_file=uploaded_file,
+            item=item,
+            progress_callback=progress_callback,
+        )
+
+    def _generate_from_pdf_chunked(
+        self,
+        *,
+        uploaded_file: types.File,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
+        cached_content_name, cache_usage = self._create_pdf_context_cache(
+            uploaded_file=uploaded_file,
+            item=item,
+            progress_callback=progress_callback,
+        )
+        total_usage = self.merge_usage(cache_usage)
+
+        try:
+            self._notify(progress_callback, 62, "Gemini 正在规划论文分块翻译结构。")
+            plan_payload, plan_usage = self._request_pdf_translation_plan(
+                uploaded_file=uploaded_file,
+                cached_content_name=cached_content_name,
+                item=item,
+            )
+            total_usage = self.merge_usage(total_usage, plan_usage)
+            chunks = self._normalize_pdf_translation_plan(plan_payload)
+            if not chunks:
+                raise ValueError("Gemini did not return a usable PDF translation plan.")
+
+            translated_chunks: list[dict[str, object]] = []
+            translatable_count = sum(1 for chunk in chunks if not self._chunk_should_skip_translation(chunk))
+            completed = 0
+            for index, chunk in enumerate(chunks, start=1):
+                if self._chunk_should_skip_translation(chunk):
+                    continue
+                completed += 1
+                progress = 64 + min(18, int(completed / max(translatable_count, 1) * 18))
+                self._notify(
+                    progress_callback,
+                    progress,
+                    f"Gemini 正在翻译分块 {completed}/{translatable_count}：{chunk['heading']}",
+                )
+                chunk_payload, chunk_usage = self._request_pdf_translation_chunk(
+                    uploaded_file=uploaded_file,
+                    cached_content_name=cached_content_name,
+                    item=item,
+                    chunk=chunk,
+                    chunk_index=index,
+                    total_chunks=len(chunks),
+                )
+                total_usage = self.merge_usage(total_usage, chunk_usage)
+                normalized_chunk = self._normalize_pdf_translation_chunk(chunk_payload, fallback_chunk=chunk)
+                if normalized_chunk["segments"]:
+                    translated_chunks.append(normalized_chunk)
+
+            if not translated_chunks:
+                raise ValueError("Gemini did not return any translated PDF chunks.")
+
+            stitched_body = self._stitch_chunked_pdf_sections(translated_chunks)
+
+            self._notify(progress_callback, 84, "Gemini 正在生成核心摘要与关键图表解读。")
+            summary_text, summary_usage = self._request_pdf_summary(
+                uploaded_file=uploaded_file,
+                cached_content_name=cached_content_name,
+                item=item,
+                translated_chunks=translated_chunks,
+            )
+            artifacts_text, artifacts_usage = self._request_pdf_key_artifacts(
+                uploaded_file=uploaded_file,
+                cached_content_name=cached_content_name,
+                item=item,
+                translated_chunks=translated_chunks,
+            )
+            commentary_text, commentary_usage = self._request_pdf_expert_commentary(
+                item=item,
+                translated_body=stitched_body,
+            )
+            total_usage = self.merge_usage(total_usage, summary_usage, artifacts_usage, commentary_usage)
+
+            self._notify(progress_callback, 92, "正在整理多轮翻译结果。")
+            article = self._stitch_chunked_pdf_article(
+                item=item,
+                summary_text=summary_text,
+                translated_body=stitched_body,
+                artifacts_text=artifacts_text,
+                commentary_text=commentary_text,
+            )
+            return article, total_usage
+        finally:
+            if cached_content_name:
+                try:
+                    self.client.caches.delete(name=cached_content_name)
+                except Exception as exc:
+                    LOGGER.warning("Gemini cache cleanup failed for %s: %s", item.title, exc)
+
+    def _generate_from_pdf_single_pass(
+        self,
+        *,
+        uploaded_file: types.File,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
         self._notify(progress_callback, 72, "PDF 已上传，Gemini 正在深度阅读并生成解析。")
         response = self.client.models.generate_content(
             model=self.settings.gemini_model,
@@ -252,6 +367,529 @@ class LLMProcessor:
         )
         usage = self.extract_usage(response, self.settings.gemini_model)
         return (response.text or "").strip() or self._fallback_article(item), usage
+
+    def _create_pdf_context_cache(
+        self,
+        *,
+        uploaded_file: types.File,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None,
+    ) -> tuple[str | None, dict]:
+        self._notify(progress_callback, 58, "正在创建 Gemini 论文上下文缓存。")
+        try:
+            cached = self.client.caches.create(
+                model=self.settings.gemini_model,
+                config=types.CreateCachedContentConfig(
+                    display_name=f"ResearchAgent::{item.identifier[:48]}",
+                    ttl="3600s",
+                    contents=[uploaded_file],
+                    system_instruction=self.system_prompt,
+                ),
+            )
+            return getattr(cached, "name", None), self._extract_cached_usage(cached)
+        except Exception as exc:
+            LOGGER.warning("Gemini cache creation failed for %s: %s", item.title, exc)
+            return None, self._empty_usage()
+
+    def _request_pdf_translation_plan(
+        self,
+        *,
+        uploaded_file: types.File,
+        cached_content_name: str | None,
+        item: ResearchItem,
+    ) -> tuple[object, dict]:
+        prompt = (
+            "你现在先不要直接输出整篇译文，而是为后续的多轮逐段翻译制定一个稳定的翻译任务计划。"
+            "请结合完整论文上下文，把正文按原文章节 / 小节顺序拆成多个可独立翻译的块。"
+            "每个块必须足够小，使得在一次调用里可以稳定输出更多细节，而不会因为输出过长而退化成总结。"
+            "优先按原文小节切分；如果某个小节很长，可以拆成 Part 1 / Part 2。"
+            "不要把相邻的大章节粗暴合并成一个 chunk，例如不要把 Abstract 和 Introduction 合成一块。"
+            "References / Bibliography / Acknowledgements 这类纯引用或低信息密度章节应当单独标记为 skip_translation=true。"
+            "只返回 JSON 对象，不要输出 Markdown 或解释。\n\n"
+            "JSON 格式：\n"
+            "{\n"
+            '  "chunks": [\n'
+            "    {\n"
+            '      "heading": "2 Method",\n'
+            '      "page_refs": ["P4", "P5"],\n'
+            '      "translation_scope": "说明这一块覆盖哪些段落 / 小点",\n'
+            '      "skip_translation": false\n'
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "硬性要求：\n"
+            "- chunks 必须按原文顺序排列；\n"
+            "- 尽量覆盖 Introduction、Method、Experiments、Appendix 中的关键技术内容；\n"
+            "- 每个 chunk 都要给出尽量准确的页码参考；\n"
+            "- 总 chunk 数控制在 8 到 20 个之间；\n"
+            "- 每个 chunk 尽量只覆盖一个小节，最多覆盖一个紧密相关的小节组；\n"
+            "- 不要遗漏关键附录；\n"
+            "- 不要输出空 chunks。\n\n"
+            f"论文标题：{item.title}"
+        )
+        response = self._generate_with_pdf_context(
+            prompt=prompt,
+            uploaded_file=uploaded_file,
+            cached_content_name=cached_content_name,
+            temperature=0.1,
+            max_output_tokens=4096,
+            response_mime_type="application/json",
+            response_json_schema={
+                "type": "object",
+                "properties": {
+                    "chunks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "heading": {"type": "string"},
+                                "page_refs": {"type": "array", "items": {"type": "string"}},
+                                "translation_scope": {"type": "string"},
+                                "skip_translation": {"type": "boolean"},
+                            },
+                            "required": ["heading"],
+                        },
+                    }
+                },
+                "required": ["chunks"],
+            },
+        )
+        return self._extract_json_payload(response.text or ""), self.extract_usage(response, self.settings.gemini_model)
+
+    def _request_pdf_translation_chunk(
+        self,
+        *,
+        uploaded_file: types.File,
+        cached_content_name: str | None,
+        item: ResearchItem,
+        chunk: dict[str, object],
+        chunk_index: int,
+        total_chunks: int,
+    ) -> tuple[object, dict]:
+        page_ref_text = " ".join(chunk.get("page_refs", [])) or "未提供"
+        prompt = (
+            "你现在执行多轮翻译任务中的其中一块。"
+            "请结合完整论文上下文，只翻译当前指定的章节 / 小节范围，不要提前翻译到别的章节，不要跳段，不要总结化缩写。"
+            "请尽量逐段保留信息，把内容拆成多个 segments，避免把多个高信息密度段落压成一段。\n\n"
+            f"当前块序号：{chunk_index}/{total_chunks}\n"
+            f"目标章节：{chunk['heading']}\n"
+            f"页码参考：{page_ref_text}\n"
+            f"翻译范围：{chunk.get('translation_scope', '')}\n\n"
+            "只返回 JSON 对象，不要输出 Markdown 或额外说明。\n"
+            "JSON 格式：\n"
+            "{\n"
+            '  "heading": "2 Method",\n'
+            '  "page_refs": ["P4", "P5"],\n'
+            '  "segments": [\n'
+            "    {\n"
+            '      "original": "英文原句或英文原段关键原文",\n'
+            '      "translation": "对应的中文忠实翻译"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "要求：\n"
+            "- segments 按原文出现顺序排列；\n"
+            "- original 要保留对应的英文原句或英文原段核心文本，用于防止遗漏；\n"
+            "- translation 要尽量完整保留关键定义、公式含义、实验设置、并列要点与限制条件；\n"
+            "- 如果一个段落里有多个小点，请拆成多个 segments；\n"
+            "- 如果某一部分是纯引用或参考文献，不要胡乱翻译，直接返回空 segments。\n\n"
+            f"论文标题：{item.title}"
+        )
+        try:
+            response = self._generate_with_pdf_context(
+                prompt=prompt,
+                uploaded_file=uploaded_file,
+                cached_content_name=cached_content_name,
+                temperature=0.0,
+                max_output_tokens=3072,
+                response_mime_type="application/json",
+                response_json_schema={
+                    "type": "object",
+                    "properties": {
+                        "heading": {"type": "string"},
+                        "page_refs": {"type": "array", "items": {"type": "string"}},
+                        "segments": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "original": {"type": "string"},
+                                    "translation": {"type": "string"},
+                                },
+                                "required": ["translation"],
+                            },
+                        },
+                    },
+                    "required": ["heading", "segments"],
+                },
+            )
+            payload = self._extract_json_payload(response.text or "")
+            normalized = self._normalize_pdf_translation_chunk(payload, fallback_chunk=chunk)
+            if normalized["segments"]:
+                return normalized, self.extract_usage(response, self.settings.gemini_model)
+        except Exception as exc:
+            LOGGER.warning("Gemini structured PDF chunk translation failed for %s [%s]: %s", item.title, chunk["heading"], exc)
+
+        fallback_prompt = (
+            "你现在执行一次窄范围的忠实翻译回退。"
+            "请仅翻译当前指定章节 / 小节，按原文顺序自然展开，不要总结，不要跳段。"
+            "只输出正文，不要输出 JSON，不要解释。\n\n"
+            f"目标章节：{chunk['heading']}\n"
+            f"页码参考：{page_ref_text}\n"
+            f"翻译范围：{chunk.get('translation_scope', '')}\n\n"
+            f"论文标题：{item.title}"
+        )
+        response = self._generate_with_pdf_context(
+            prompt=fallback_prompt,
+            uploaded_file=uploaded_file,
+            cached_content_name=cached_content_name,
+            temperature=0.0,
+            max_output_tokens=2048,
+        )
+        payload = {
+            "heading": chunk["heading"],
+            "page_refs": chunk.get("page_refs", []),
+            "segments": [
+                {
+                    "original": "",
+                    "translation": (response.text or "").strip(),
+                }
+            ],
+        }
+        return payload, self.extract_usage(response, self.settings.gemini_model)
+
+    def _request_pdf_summary(
+        self,
+        *,
+        uploaded_file: types.File,
+        cached_content_name: str | None,
+        item: ResearchItem,
+        translated_chunks: list[dict[str, object]],
+    ) -> tuple[str, dict]:
+        heading_summary = "；".join(str(chunk.get("heading", "")).strip() for chunk in translated_chunks[:12] if str(chunk.get("heading", "")).strip())
+        prompt = (
+            "请基于完整论文上下文，为这篇论文生成一个更像导读的“核心摘要”。"
+            "要求：4 到 6 句话，尽量覆盖论文的主要目标、关键方法、重要结果和主线贡献。"
+            "不要输出标题，不要输出列表，只输出最终摘要正文。\n\n"
+            f"论文标题：{item.title}\n"
+            f"已翻译章节：{heading_summary}"
+        )
+        response = self._generate_with_pdf_context(
+            prompt=prompt,
+            uploaded_file=uploaded_file,
+            cached_content_name=cached_content_name,
+            temperature=0.1,
+            max_output_tokens=768,
+        )
+        return (response.text or "").strip(), self.extract_usage(response, self.settings.gemini_model)
+
+    def _request_pdf_key_artifacts(
+        self,
+        *,
+        uploaded_file: types.File,
+        cached_content_name: str | None,
+        item: ResearchItem,
+        translated_chunks: list[dict[str, object]],
+    ) -> tuple[str, dict]:
+        heading_summary = "；".join(str(chunk.get("heading", "")).strip() for chunk in translated_chunks[:12] if str(chunk.get("heading", "")).strip())
+        prompt = (
+            "请基于完整论文上下文，单独提炼这篇论文里最关键的图表、公式和表格。"
+            "请优先列出真正承载核心信息的图 / 表 / 公式，并说明它们证明了什么。"
+            "如果有关键页码，请在句末追加 [P12] 形式的页码标记。"
+            "请输出 Markdown 列表正文，不要输出章节标题。\n\n"
+            f"论文标题：{item.title}\n"
+            f"已翻译章节：{heading_summary}"
+        )
+        response = self._generate_with_pdf_context(
+            prompt=prompt,
+            uploaded_file=uploaded_file,
+            cached_content_name=cached_content_name,
+            temperature=0.1,
+            max_output_tokens=1536,
+        )
+        return (response.text or "").strip(), self.extract_usage(response, self.settings.gemini_model)
+
+    def _request_pdf_expert_commentary(
+        self,
+        *,
+        item: ResearchItem,
+        translated_body: str,
+    ) -> tuple[str, dict]:
+        if not self.client:
+            return "", self._empty_usage()
+        response = self.client.models.generate_content(
+            model=self.settings.gemini_model,
+            contents=(
+                "下面是基于一篇论文所做的中文逐节忠实转写结果。"
+                "请基于这份内容，单独输出一段更凝练但专业的“专家点评”。"
+                "请从数据、算法、工程 / Infra 三个维度点评："
+                "哪些点是实质创新，哪些更像工程整合，哪些落地价值高，哪些实现难度大。"
+                "请输出 Markdown 列表正文，不要输出章节标题。\n\n"
+                f"论文标题：{item.title}\n\n"
+                f"逐节转写：\n{translated_body[:24000]}"
+            ),
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=1536,
+            ),
+        )
+        return (response.text or "").strip(), self.extract_usage(response, self.settings.gemini_model)
+
+    def _generate_with_pdf_context(
+        self,
+        *,
+        prompt: str,
+        uploaded_file: types.File,
+        cached_content_name: str | None,
+        temperature: float,
+        max_output_tokens: int,
+        response_mime_type: str | None = None,
+        response_json_schema: dict[str, Any] | None = None,
+    ) -> types.GenerateContentResponse:
+        config_kwargs: dict[str, object] = {
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        }
+        if response_mime_type:
+            config_kwargs["response_mime_type"] = response_mime_type
+        if response_json_schema:
+            config_kwargs["response_json_schema"] = response_json_schema
+        if cached_content_name:
+            config_kwargs["cached_content"] = cached_content_name
+            contents: object = prompt
+        else:
+            contents = [prompt, uploaded_file]
+        last_exc: Exception | None = None
+        token_limit = max_output_tokens
+        for attempt in range(1, 4):
+            try:
+                config_kwargs["max_output_tokens"] = token_limit
+                return self.client.models.generate_content(
+                    model=self.settings.gemini_model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= 3:
+                    break
+                token_limit = max(768, int(token_limit * 0.75))
+                LOGGER.warning(
+                    "Gemini PDF request failed on attempt %s; retrying with max_output_tokens=%s: %s",
+                    attempt,
+                    token_limit,
+                    exc,
+                )
+        assert last_exc is not None
+        raise last_exc
+
+    @staticmethod
+    def _chunk_should_skip_translation(chunk: dict[str, object]) -> bool:
+        if bool(chunk.get("skip_translation")):
+            return True
+        heading = str(chunk.get("heading", "")).lower()
+        return any(keyword in heading for keyword in ("reference", "bibliography", "acknowledgement", "acknowledgment"))
+
+    @staticmethod
+    def _normalize_pdf_translation_plan(payload: object) -> list[dict[str, object]]:
+        if isinstance(payload, list):
+            raw_chunks = payload
+        elif isinstance(payload, dict):
+            raw_chunks = payload.get("chunks", [])
+        else:
+            raw_chunks = []
+
+        if not isinstance(raw_chunks, list):
+            return []
+
+        normalized: list[dict[str, object]] = []
+        seen_keys: set[str] = set()
+        for entry in raw_chunks[:18]:
+            if not isinstance(entry, dict):
+                continue
+            heading = " ".join(str(entry.get("heading", "")).split()).strip()
+            if not heading:
+                continue
+            translation_scope = " ".join(str(entry.get("translation_scope", "")).split()).strip()
+            page_refs = LLMProcessor._normalize_page_refs(entry.get("page_refs"))
+            key = f"{heading.lower()}|{' '.join(page_refs)}|{translation_scope.lower()}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            normalized.append(
+                {
+                    "heading": heading,
+                    "page_refs": page_refs,
+                    "translation_scope": translation_scope or f"仅翻译 {heading} 相关内容。",
+                    "skip_translation": bool(entry.get("skip_translation", False)),
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_pdf_translation_chunk(
+        payload: object,
+        *,
+        fallback_chunk: dict[str, object],
+    ) -> dict[str, object]:
+        heading = str(fallback_chunk.get("heading", "")).strip()
+        page_refs = LLMProcessor._normalize_page_refs(fallback_chunk.get("page_refs"))
+        if not isinstance(payload, dict):
+            return {
+                "heading": heading,
+                "page_refs": page_refs,
+                "segments": [],
+            }
+
+        payload_heading = " ".join(str(payload.get("heading", heading)).split()).strip()
+        if payload_heading:
+            heading = payload_heading
+        payload_page_refs = LLMProcessor._normalize_page_refs(payload.get("page_refs"))
+        if payload_page_refs:
+            page_refs = payload_page_refs
+
+        raw_segments = payload.get("segments", [])
+        segments: list[dict[str, str]] = []
+        if isinstance(raw_segments, list):
+            for entry in raw_segments:
+                if not isinstance(entry, dict):
+                    continue
+                original = " ".join(str(entry.get("original", "")).split()).strip()
+                translation = str(entry.get("translation", "")).strip()
+                if not translation:
+                    continue
+                segments.append(
+                    {
+                        "original": original,
+                        "translation": translation,
+                    }
+                )
+
+        return {
+            "heading": heading,
+            "page_refs": page_refs,
+            "segments": segments,
+        }
+
+    @staticmethod
+    def _normalize_page_refs(value: object) -> list[str]:
+        refs: list[str] = []
+        if isinstance(value, list):
+            candidates = value
+        elif isinstance(value, tuple):
+            candidates = list(value)
+        elif value is None:
+            candidates = []
+        else:
+            candidates = [value]
+
+        for candidate in candidates:
+            text = str(candidate).upper()
+            for match in re.findall(r"P\d{1,4}", text):
+                if match not in refs:
+                    refs.append(match)
+        return refs
+
+    @staticmethod
+    def _extract_json_payload(raw_text: str) -> object:
+        payload = raw_text.strip()
+        if not payload:
+            return None
+        payload = payload.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
+        decoded = LLMProcessor._decode_summary_payload(payload)
+        if decoded is not None:
+            return decoded
+
+        for opener, closer in (("{", "}"), ("[", "]")):
+            start = payload.find(opener)
+            end = payload.rfind(closer)
+            if start != -1 and end > start:
+                decoded = LLMProcessor._decode_summary_payload(payload[start : end + 1])
+                if decoded is not None:
+                    return decoded
+        return None
+
+    @staticmethod
+    def _stitch_chunked_pdf_sections(translated_chunks: list[dict[str, object]]) -> str:
+        sections: list[str] = []
+        for chunk in translated_chunks:
+            heading = str(chunk.get("heading", "")).strip()
+            if heading:
+                sections.append(f"## {heading}")
+            page_refs = [ref for ref in chunk.get("page_refs", []) if str(ref).strip()]
+            if page_refs:
+                sections.append(f"_页码参考：{' '.join(str(ref) for ref in page_refs)}_")
+            for segment in chunk.get("segments", []):
+                if not isinstance(segment, dict):
+                    continue
+                translation = str(segment.get("translation", "")).strip()
+                if translation:
+                    sections.append(translation)
+            sections.append("")
+        return "\n\n".join(block for block in sections if block is not None).strip()
+
+    @staticmethod
+    def _stitch_chunked_pdf_article(
+        *,
+        item: ResearchItem,
+        summary_text: str,
+        translated_body: str,
+        artifacts_text: str,
+        commentary_text: str,
+    ) -> str:
+        sections = [f"# {item.title}"]
+        if summary_text.strip():
+            sections.extend(["## 核心摘要", summary_text.strip()])
+        if translated_body.strip():
+            sections.append(translated_body.strip())
+        if artifacts_text.strip():
+            sections.extend(["## 关键图表 / 公式 / 表格解读", artifacts_text.strip()])
+        if commentary_text.strip():
+            sections.extend(["## 专家点评：数据 / 算法 / 工程创新", commentary_text.strip()])
+        return "\n\n".join(section for section in sections if section.strip())
+
+    def _extract_cached_usage(self, cached_content: types.CachedContent) -> dict:
+        usage = getattr(cached_content, "usage_metadata", None)
+        if not usage:
+            return self._empty_usage()
+        prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+        if not prompt_tokens:
+            prompt_tokens = int(getattr(usage, "total_token_count", 0) or 0)
+        if not prompt_tokens:
+            return self._empty_usage()
+        pricing = MODEL_PRICING.get(self.settings.gemini_model, {})
+        input_per_1m = float(pricing.get("input_per_1m", 0.0) or 0.0)
+        input_cost = prompt_tokens / 1_000_000 * input_per_1m
+        return {
+            "model": self.settings.gemini_model,
+            "prompt_tokens": prompt_tokens,
+            "output_tokens": 0,
+            "total_tokens": prompt_tokens,
+            "input_cost_usd": round(input_cost, 6),
+            "output_cost_usd": 0.0,
+            "estimated_cost_usd": round(input_cost, 6),
+            "pricing_basis": str(pricing.get("pricing_basis", "")),
+            "pricing_reference_url": GEMINI_3_FLASH_PRICING_URL,
+        }
+
+    def _upload_file_with_retry(self, path: Path, label: str) -> types.File:
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                return self.client.files.upload(file=str(path))
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= 3:
+                    break
+                LOGGER.warning(
+                    "Gemini File API upload failed for %s %s on attempt %s, retrying: %s",
+                    label,
+                    path.name,
+                    attempt,
+                    exc,
+                )
+        assert last_exc is not None
+        raise last_exc
 
     def _generate_from_html(
         self,
@@ -313,7 +951,7 @@ class LLMProcessor:
         ]
         for image_path in self._collect_visual_assets(html_path.parent):
             self._notify(progress_callback, upload_progress, "正在上传网页截图与图片素材到 Gemini。")
-            content_parts.append(self.client.files.upload(file=str(image_path)))
+            content_parts.append(self._upload_file_with_retry(image_path, "网页素材"))
         return content_parts
 
     @staticmethod

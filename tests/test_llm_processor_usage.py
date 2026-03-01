@@ -95,3 +95,76 @@ def test_fallback_article_summary_uses_first_body_paragraph() -> None:
     summary = LLMProcessor._fallback_article_summary(article, item)
 
     assert "Forge 是一个面向大规模 Agent 强化学习的训练框架" in summary
+
+
+def test_extract_json_payload_supports_wrapped_dict_and_list() -> None:
+    wrapped = "Here is the JSON requested: ```json\n{\"chunks\":[{\"heading\":\"1 Intro\"}]}\n```"
+    array_payload = "```json\n[{\"heading\":\"2 Method\"}]\n```"
+
+    assert LLMProcessor._extract_json_payload(wrapped) == {"chunks": [{"heading": "1 Intro"}]}
+    assert LLMProcessor._extract_json_payload(array_payload) == [{"heading": "2 Method"}]
+
+
+def test_normalize_pdf_translation_plan_deduplicates_and_limits() -> None:
+    payload = {
+        "chunks": [
+            {"heading": " 1 Intro ", "page_refs": ["p1", "P2"], "translation_scope": " translate intro ", "skip_translation": False},
+            {"heading": "1 Intro", "page_refs": ["P1", "P2"], "translation_scope": "translate intro", "skip_translation": False},
+            {"heading": "References", "page_refs": "P30", "translation_scope": "keep refs", "skip_translation": True},
+        ]
+    }
+
+    normalized = LLMProcessor._normalize_pdf_translation_plan(payload)
+
+    assert normalized == [
+        {
+            "heading": "1 Intro",
+            "page_refs": ["P1", "P2"],
+            "translation_scope": "translate intro",
+            "skip_translation": False,
+        },
+        {
+            "heading": "References",
+            "page_refs": ["P30"],
+            "translation_scope": "keep refs",
+            "skip_translation": True,
+        },
+    ]
+
+
+def test_stitch_chunked_pdf_article_combines_sections_naturally() -> None:
+    item = ResearchItem(
+        source="arxiv",
+        title="GLM-5",
+        summary="",
+        source_url="https://arxiv.org/abs/2602.15763",
+        published_at="2026-03-01T00:00:00",
+        identifier="glm-5",
+    )
+    translated_body = LLMProcessor._stitch_chunked_pdf_sections(
+        [
+            {
+                "heading": "1 Introduction",
+                "page_refs": ["P1", "P2"],
+                "segments": [
+                    {"original": "GLM-5 is ...", "translation": "GLM-5 是一套面向 agentic engineering 的模型体系。"},
+                    {"original": "It improves ...", "translation": "它在推理与编码场景中强调更强的任务闭环能力。"},
+                ],
+            }
+        ]
+    )
+
+    article = LLMProcessor._stitch_chunked_pdf_article(
+        item=item,
+        summary_text="这篇论文介绍了 GLM-5 的整体目标与关键路线。",
+        translated_body=translated_body,
+        artifacts_text="- 图 1 展示了训练流程。[P4]",
+        commentary_text="- 工程侧的增量主要体现在训练与推理一体化闭环。",
+    )
+
+    assert article.startswith("# GLM-5")
+    assert "## 核心摘要" in article
+    assert "## 1 Introduction" in article
+    assert "_页码参考：P1 P2_" in article
+    assert "## 关键图表 / 公式 / 表格解读" in article
+    assert "## 专家点评：数据 / 算法 / 工程创新" in article
