@@ -685,10 +685,22 @@ body.layout-resizing {
   color: var(--muted);
   font-size: 0.74rem;
   line-height: 1.5;
+  position: relative;
   display: -webkit-box;
   -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.card-excerpt::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.6em;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(243, 244, 246, 0) 0%, rgba(243, 244, 246, 0.9) 65%, rgba(243, 244, 246, 1) 100%);
 }
 
 .card-tags {
@@ -809,10 +821,22 @@ body.layout-resizing {
   color: var(--muted);
   font-size: 0.72rem;
   line-height: 1.48;
+  position: relative;
   display: -webkit-box;
   -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.library-browser-summary::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1.7em;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(243, 244, 246, 0) 0%, rgba(243, 244, 246, 0.9) 65%, rgba(243, 244, 246, 1) 100%);
 }
 
 .library-browser-footer {
