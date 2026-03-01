@@ -1386,7 +1386,8 @@ function openTagModal() {
   if (!article) {
     return;
   }
-  state.tagDraft = [...new Set((article.display_tags || []).map((tag) => String(tag).trim()).filter(Boolean))];
+  const sourceTags = article.editable_tags || article.topic_tags || article.display_tags || [];
+  state.tagDraft = [...new Set(sourceTags.map((tag) => String(tag).trim()).filter(Boolean))];
   renderTagDraft();
   nodes.tagInput.value = "";
   nodes.tagModal.classList.remove("hidden");
@@ -1434,6 +1435,7 @@ function addTagsFromInput() {
     return;
   }
   const existing = new Set(state.tagDraft.map((tag) => tag.toLowerCase()));
+  const newTags = [];
   incoming.forEach((tag) => {
     const limited = tag.slice(0, 24);
     const key = limited.toLowerCase();
@@ -1441,9 +1443,9 @@ function addTagsFromInput() {
       return;
     }
     existing.add(key);
-    state.tagDraft.push(limited);
+    newTags.push(limited);
   });
-  state.tagDraft = state.tagDraft.slice(0, 12);
+  state.tagDraft = [...newTags, ...state.tagDraft].slice(0, 12);
   nodes.tagInput.value = "";
   renderTagDraft();
 }

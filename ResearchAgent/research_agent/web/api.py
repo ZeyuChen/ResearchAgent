@@ -51,8 +51,12 @@ class UpdateTagsRequest(BaseModel):
     tags: list[str]
 
 
+def build_topic_tags(article: dict) -> list[str]:
+    return [str(tag).strip() for tag in article.get("topic_tags", []) if str(tag).strip()]
+
+
 def build_display_tags(article: dict) -> list[str]:
-    return [str(tag).strip() for tag in article.get("topic_tags", []) if str(tag).strip()][:6]
+    return build_topic_tags(article)[:6]
 
 
 def build_visible_source_files(source_files: list[dict]) -> list[dict]:
@@ -274,7 +278,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for article in articles:
             article["display_tags"] = build_display_tags(article)
             article["arxiv_id"] = infer_arxiv_id(article)
-            topic_counter.update(article["display_tags"])
+            article["editable_tags"] = build_topic_tags(article)
+            topic_counter.update(article["editable_tags"])
         return {
             "articles": articles,
             "topics": [{"name": topic, "count": count} for topic, count in topic_counter.most_common(24)],
