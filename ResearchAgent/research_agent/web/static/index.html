@@ -7,18 +7,27 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui4" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui5" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui5" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
       <header class="app-bar">
         <div class="app-bar-left">
-          <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧边栏">☰</button>
-          <div class="brand-mark"></div>
-          <h1>ResearchAgent</h1>
+          <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧边栏">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M4 5.5H16" />
+              <path d="M4 10H16" />
+              <path d="M4 14.5H12.5" />
+            </svg>
+          </button>
+          <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui5" alt="ResearchAgent" />
+            <h1>ResearchAgent</h1>
+          </a>
         </div>
       </header>
 
@@ -108,7 +117,12 @@
     <div id="imageLightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-labelledby="lightboxTitle">
       <div class="lightbox-backdrop" data-close-lightbox="true"></div>
       <div class="lightbox-panel">
-        <button id="lightboxClose" class="lightbox-close" type="button" aria-label="关闭预览">×</button>
+        <button id="lightboxClose" class="lightbox-close" type="button" aria-label="关闭预览">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M5.5 5.5L14.5 14.5" />
+            <path d="M14.5 5.5L5.5 14.5" />
+          </svg>
+        </button>
         <div id="lightboxTitle" class="lightbox-title">图像预览</div>
         <div class="lightbox-stage">
           <img id="lightboxImage" class="lightbox-image" alt="图像预览" />
@@ -124,7 +138,12 @@
             <div class="block-title">新增资料</div>
             <h3 id="ingestModalTitle">导入新论文或网页</h3>
           </div>
-          <button id="closeIngestModal" class="icon-button" type="button" aria-label="关闭导入窗口">×</button>
+          <button id="closeIngestModal" class="icon-button" type="button" aria-label="关闭导入窗口">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M5.5 5.5L14.5 14.5" />
+              <path d="M14.5 5.5L5.5 14.5" />
+            </svg>
+          </button>
         </div>
 
         <div class="intake-actions">
@@ -155,6 +174,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui4"></script>
+    <script src="/static/app.js?v=20260301-ui5"></script>
   </body>
 </html>
