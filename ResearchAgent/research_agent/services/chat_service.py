@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 import logging
 import threading
@@ -123,6 +124,16 @@ class ChatService:
                     "updated_at": "",
                 }
             return self._serialize_session(session)
+
+    def list_sessions(self, *, article_id: str, model_key: str) -> list[dict[str, Any]]:
+        with self._lock:
+            sessions = [
+                session
+                for session in self._sessions.values()
+                if session.article_id == article_id and session.model_key == model_key
+            ]
+        sessions.sort(key=lambda row: row.updated_at or row.created_at, reverse=True)
+        return [self._serialize_session_summary(session) for session in sessions]
 
     def send_message(
         self,
@@ -473,6 +484,34 @@ class ChatService:
             "messages": serialized_messages,
             "updated_at": session.updated_at,
         }
+
+    def _serialize_session_summary(self, session: ChatSession) -> dict[str, Any]:
+        return {
+            "session_id": session.session_id,
+            "label": self._session_label(session),
+            "preview": self._session_preview(session),
+            "updated_at": session.updated_at,
+            "message_count": len(session.messages),
+        }
+
+    def _session_label(self, session: ChatSession) -> str:
+        first_user = next((entry for entry in session.messages if entry.get("role") == "user"), None)
+        if first_user:
+            text = " ".join(str(first_user.get("text", "")).split()).strip()
+            if text:
+                for delimiter in ("？", "?", "。", ".", "！", "!", "\n"):
+                    if delimiter in text:
+                        text = text.split(delimiter, 1)[0].strip()
+                        break
+                return f"{text[:30]}…" if len(text) > 30 else text
+        return "新对话"
+
+    def _session_preview(self, session: ChatSession) -> str:
+        for entry in reversed(session.messages):
+            text = " ".join(str(entry.get("text", "")).split()).strip()
+            if text:
+                return f"{text[:72]}…" if len(text) > 72 else text
+        return ""
 
     def _resolve_model_name(self, model_key: str) -> str:
         if model_key == "pro":

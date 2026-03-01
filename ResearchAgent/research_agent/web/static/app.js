@@ -17,6 +17,7 @@ const state = {
   chatModelKey: "flash",
   chatArticleId: null,
   chatSessionId: null,
+  chatSessions: [],
   chatMessages: [],
   chatPending: false,
   chatPendingPhase: "",
@@ -106,6 +107,7 @@ const nodes = {
   cancelTagSave: document.getElementById("cancelTagSave"),
   confirmTagSave: document.getElementById("confirmTagSave"),
   chatArticleSelect: document.getElementById("chatArticleSelect"),
+  chatSessionSelect: document.getElementById("chatSessionSelect"),
   chatModelSelect: document.getElementById("chatModelSelect"),
   chatContextHint: document.getElementById("chatContextHint"),
   chatMessages: document.getElementById("chatMessages"),
@@ -478,6 +480,7 @@ function buildTagMarkup(tags, limit = 4) {
 async function loadArticle(articleId, nextWorkspace = "reader") {
   state.activeArticleId = articleId;
   state.chatArticleId = articleId;
+  state.chatSessionId = null;
   renderArticleList();
   renderLibraryBrowser();
   renderChatSidebar();
@@ -491,6 +494,9 @@ async function loadArticle(articleId, nextWorkspace = "reader") {
   state.workspace = nextWorkspace;
   renderArticle(article);
   renderWorkspace();
+  if (nextWorkspace === "chat") {
+    await loadPersistedChatSession();
+  }
 }
 
 function renderArticle(article) {
@@ -655,6 +661,7 @@ function renderVisualGallery(article) {
 
 function renderChatSidebar() {
   renderChatArticleOptions();
+  renderChatSessionOptions();
   renderChatModelOptions();
   updateChatContextHint();
 }
@@ -691,6 +698,27 @@ function renderChatModelOptions() {
     option.selected = model.key === state.chatModelKey;
     nodes.chatModelSelect.appendChild(option);
   });
+}
+
+function renderChatSessionOptions() {
+  if (!nodes.chatSessionSelect) {
+    return;
+  }
+  const sessions = state.chatSessions || [];
+  nodes.chatSessionSelect.innerHTML = "";
+  const current = document.createElement("option");
+  current.value = "";
+  current.textContent = sessions.length ? "当前会话" : "暂无历史会话";
+  current.selected = !state.chatSessionId;
+  nodes.chatSessionSelect.appendChild(current);
+  sessions.forEach((session) => {
+    const option = document.createElement("option");
+    option.value = session.session_id;
+    option.textContent = session.label || "新对话";
+    option.selected = session.session_id === state.chatSessionId;
+    nodes.chatSessionSelect.appendChild(option);
+  });
+  nodes.chatSessionSelect.disabled = !state.chatArticleId || !sessions.length || state.chatPending;
 }
 
 function renderChatView() {
@@ -942,6 +970,8 @@ async function loadPersistedChatSession() {
   const article = getChatArticle();
   if (!article) {
     resetChatSession();
+    state.chatSessions = [];
+    renderChatSidebar();
     renderChatView();
     return;
   }
@@ -951,6 +981,9 @@ async function loadPersistedChatSession() {
       article_id: article.article_id,
       model: state.chatModelKey,
     });
+    if (state.chatSessionId) {
+      params.set("session_id", state.chatSessionId);
+    }
     const response = await fetch(`/api/chat/session?${params.toString()}`);
     const payload = await response.json();
     if (!response.ok) {
@@ -961,10 +994,36 @@ async function loadPersistedChatSession() {
     state.chatCache = payload.cache || null;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = false;
+    await refreshChatSessions();
   } catch (error) {
     resetChatSession();
+    await refreshChatSessions();
   }
   renderChatView();
+}
+
+async function refreshChatSessions() {
+  const article = getChatArticle();
+  if (!article) {
+    state.chatSessions = [];
+    renderChatSidebar();
+    return;
+  }
+  try {
+    const params = new URLSearchParams({
+      article_id: article.article_id,
+      model: state.chatModelKey,
+    });
+    const response = await fetch(`/api/chat/sessions?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "历史会话加载失败");
+    }
+    state.chatSessions = payload.sessions || [];
+  } catch (error) {
+    state.chatSessions = [];
+  }
+  renderChatSidebar();
 }
 
 async function sendChatMessage() {
@@ -1047,6 +1106,7 @@ async function sendChatMessage() {
     state.chatSessionId = preparePayload.session_id || state.chatSessionId;
     state.chatCache = preparePayload.cache || state.chatCache;
     state.chatForceNewSession = false;
+    await refreshChatSessions();
     setPendingChatPhase("generating");
     renderChatView();
 
@@ -1074,6 +1134,7 @@ async function sendChatMessage() {
     state.chatCache = payload.cache || null;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = false;
+    await refreshChatSessions();
     requestSettled = true;
   } catch (error) {
     if (state.activeChatRequestId !== requestId) {
@@ -2192,6 +2253,14 @@ if (nodes.chatModelSelect) {
     void loadPersistedChatSession();
     renderChatSidebar();
     renderChatView();
+  });
+}
+
+if (nodes.chatSessionSelect) {
+  nodes.chatSessionSelect.addEventListener("change", (event) => {
+    state.chatSessionId = event.target.value || null;
+    state.chatForceNewSession = false;
+    void loadPersistedChatSession();
   });
 }
 

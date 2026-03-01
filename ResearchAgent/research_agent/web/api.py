@@ -405,6 +405,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def chat_session(article_id: str, model: str = "flash", session_id: str | None = None) -> dict:
         return chat_service.get_session(article_id=article_id, model_key=model, session_id=session_id)
 
+    @app.get("/api/chat/sessions")
+    async def chat_sessions(article_id: str, model: str = "flash") -> dict:
+        return {
+            "sessions": chat_service.list_sessions(article_id=article_id, model_key=model),
+        }
+
     def start_job(job_kind: str, worker, filename: str = "") -> dict:
         job = job_manager.create_job(job_kind, filename=filename)
 
