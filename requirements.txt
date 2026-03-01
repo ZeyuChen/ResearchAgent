@@ -11,4 +11,5 @@ latex2mathml==3.78.1
 python-dotenv==1.2.1
 playwright==1.58.0
 python-multipart==0.0.20
+reportlab==4.4.4
 pytest==8.4.2

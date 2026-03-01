@@ -19,6 +19,7 @@ from research_agent.config import Settings
 from research_agent.services.arxiv_source_gallery import ArxivSourceGalleryService
 from research_agent.services.chat_service import ChatService, ChatTimeoutError
 from research_agent.services.job_manager import JobManager
+from research_agent.services.latex_translation import LatexTranslationService
 from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import extract_pdf_page_refs, inject_pdf_page_links, render_markdown
 from research_agent.services.manual_ingest import ManualIngestService
@@ -77,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     llm_processor = LLMProcessor(app_settings)
     manual_ingest = ManualIngestService(app_settings, storage_manager, llm_processor)
     chat_service = ChatService(app_settings, storage_manager, llm_processor)
+    latex_translation_service = LatexTranslationService(app_settings, storage_manager, llm_processor)
     pdf_preview_service = PDFPreviewService(app_settings.data_dir)
     arxiv_source_gallery_service = ArxivSourceGalleryService(app_settings.data_dir)
     job_manager = JobManager()
@@ -250,12 +252,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 }
                 for entry in preview_entries
             ]
+
+        translation_payload = dict(article.get("fulltext_translation", {}) or {})
+        translated_pdf_path = str(translation_payload.get("translated_pdf_path", "") or "")
+        translated_pdf_url = ""
+        if translated_pdf_path and (app_settings.data_dir / translated_pdf_path).exists():
+            translated_pdf_url = f"/files/{translated_pdf_path}"
+        translation_payload["translated_pdf_url"] = translated_pdf_url
+        translation_payload["available"] = bool(infer_arxiv_id(article))
         return {
             **article,
             "source_files": source_files,
             "display_source_files": build_visible_source_files(source_files),
             "display_tags": display_tags,
             "pdf_source_url": pdf_source,
+            "arxiv_id": infer_arxiv_id(article),
+            "fulltext_translation": translation_payload,
             "pdf_page_refs": extract_pdf_page_refs(article.get("markdown", "")),
             "source_figure_gallery": source_gallery,
             "pdf_previews": previews,
@@ -455,6 +467,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "progress": job.progress,
             "message": job.message,
         }
+
+    @app.post("/api/articles/{article_id}/fulltext-translation")
+    async def start_fulltext_translation(article_id: str) -> dict:
+        article = storage_manager.load_article(article_id)
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        if not infer_arxiv_id(article):
+            raise HTTPException(status_code=400, detail="Only arXiv-backed articles support source-level full-text translation")
+        if not latex_translation_service.available:
+            raise HTTPException(status_code=503, detail="Gemini API is not configured")
+        return start_job(
+            "translation",
+            lambda progress_callback: latex_translation_service.translate_article(
+                article_id,
+                progress_callback=progress_callback,
+            ),
+        )
 
     @app.post("/api/ingest/url")
     async def ingest_url(payload: URLIngestRequest) -> dict:

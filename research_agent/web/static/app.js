@@ -6,12 +6,15 @@ const state = {
   search: "",
   activeJobId: null,
   activeJobStartedAt: 0,
+  activeTranslationJobId: null,
+  activeTranslationJobStartedAt: 0,
   ingestSuggestions: [],
   flomoDraft: null,
   selectionDraft: null,
   sidebarCollapsed: false,
   workspace: "library",
   viewMode: "both",
+  pdfVariant: "original",
   articleHasPdf: false,
   chatOptions: { available: false, default_model_key: "flash", models: [] },
   chatModelKey: "flash",
@@ -77,6 +80,9 @@ const nodes = {
   pdfViewer: document.getElementById("pdfViewer"),
   pdfEmpty: document.getElementById("pdfEmpty"),
   pdfCaption: document.getElementById("pdfCaption"),
+  pdfVariantToggle: document.getElementById("pdfVariantToggle"),
+  translateFulltextButton: document.getElementById("translateFulltextButton"),
+  translationStatus: document.getElementById("translationStatus"),
   ingestUrlInput: document.getElementById("ingestUrlInput"),
   ingestUrlButton: document.getElementById("ingestUrlButton"),
   ingestSuggestions: document.getElementById("ingestSuggestions"),
@@ -537,6 +543,7 @@ async function loadArticle(articleId, nextWorkspace = "reader") {
   state.activeArticleId = articleId;
   state.chatArticleId = articleId;
   state.chatSessionId = null;
+  state.pdfVariant = "original";
   renderArticleList();
   renderLibraryBrowser();
   renderChatSidebar();
@@ -646,8 +653,17 @@ function renderUsageInline(usage) {
 }
 
 function renderPdfPane(article) {
-  const pdfUrl = article.pdf_source_url || "";
-  if (!pdfUrl) {
+  const translation = article.fulltext_translation || {};
+  const translatedPdfUrl = translation.translated_pdf_url || "";
+  const originalPdfUrl = article.pdf_source_url || "";
+  const activePdfUrl = state.pdfVariant === "translated" && translatedPdfUrl
+    ? translatedPdfUrl
+    : originalPdfUrl;
+
+  renderPdfVariantControls(article, translation, Boolean(originalPdfUrl), Boolean(translatedPdfUrl));
+  renderTranslationStatus(translation);
+
+  if (!activePdfUrl) {
     nodes.pdfViewer.classList.add("hidden");
     nodes.pdfEmpty.classList.remove("hidden");
     nodes.pdfCaption.textContent = "当前文章没有可用的 PDF 原文。";
@@ -656,16 +672,78 @@ function renderPdfPane(article) {
 
   nodes.pdfViewer.classList.remove("hidden");
   nodes.pdfEmpty.classList.add("hidden");
-  nodes.pdfViewer.src = buildPdfViewerUrl(pdfUrl, 1);
-  nodes.pdfCaption.textContent = "正文中的页码标记可直接跳转到原始 PDF。";
+  nodes.pdfViewer.src = buildPdfViewerUrl(activePdfUrl, 1);
+  nodes.pdfCaption.textContent = state.pdfVariant === "translated" && translatedPdfUrl
+    ? "当前预览的是全文中译 PDF。页码跳转仍以原文页码为参考，可能略有偏移。"
+    : "正文中的页码标记可直接跳转到原始 PDF。";
 
   nodes.articleBody.querySelectorAll("a.pdf-page-ref").forEach((anchor) => {
     anchor.addEventListener("click", (event) => {
       event.preventDefault();
       const page = Number(anchor.dataset.page || "1");
-      openPdfAt(pdfUrl, page);
+      const targetPdf = state.pdfVariant === "translated" && translatedPdfUrl ? translatedPdfUrl : originalPdfUrl;
+      if (targetPdf) {
+        openPdfAt(targetPdf, page);
+      }
     });
   });
+}
+
+function renderPdfVariantControls(article, translation, hasOriginalPdf, hasTranslatedPdf) {
+  const canTranslate = Boolean(article.arxiv_id);
+  if (nodes.translateFulltextButton) {
+    nodes.translateFulltextButton.classList.toggle("hidden", !canTranslate);
+    nodes.translateFulltextButton.disabled = !canTranslate || Boolean(state.activeTranslationJobId);
+    if (canTranslate) {
+      nodes.translateFulltextButton.textContent = hasTranslatedPdf ? "重新生成全文中译" : "生成全文中译";
+    }
+  }
+
+  if (!nodes.pdfVariantToggle) {
+    return;
+  }
+
+  nodes.pdfVariantToggle.querySelectorAll(".view-toggle-button").forEach((button) => {
+    const variant = button.dataset.pdfVariant;
+    if (!variant) {
+      return;
+    }
+    const enabled = variant === "original" ? hasOriginalPdf : hasTranslatedPdf;
+    button.disabled = !enabled;
+    button.classList.toggle("active", state.pdfVariant === variant && enabled);
+  });
+
+  if (state.pdfVariant === "translated" && !hasTranslatedPdf) {
+    state.pdfVariant = "original";
+  }
+}
+
+function renderTranslationStatus(translation) {
+  if (!nodes.translationStatus) {
+    return;
+  }
+  const payload = translation || {};
+  const translatedPdfUrl = payload.translated_pdf_url || "";
+  const hasStatus = payload.available || payload.status || translatedPdfUrl || state.activeTranslationJobId;
+  if (!hasStatus) {
+    nodes.translationStatus.classList.add("hidden");
+    nodes.translationStatus.textContent = "";
+    return;
+  }
+
+  let message = "当前条目支持基于 arXiv LaTeX 源码生成全文中译。";
+  if (state.activeTranslationJobId) {
+    message = nodes.translationStatus.dataset.pendingMessage || "全文中译任务正在运行。";
+  } else if (payload.status === "completed" && translatedPdfUrl) {
+    const compiler = payload.compiler ? `，编译链路：${payload.compiler}` : "";
+    const fallback = payload.fallback_used ? "（当前为回退 PDF）" : "";
+    message = `全文中译已就绪${compiler}${fallback}`;
+  } else if (payload.status === "failed") {
+    message = payload.error || "全文中译生成失败，可稍后重试。";
+  }
+
+  nodes.translationStatus.classList.remove("hidden");
+  nodes.translationStatus.textContent = message;
 }
 
 function openPdfAt(pdfUrl, page) {
@@ -1426,6 +1504,83 @@ async function pollJob(jobId) {
     }
 
     await sleep(1200);
+  }
+}
+
+async function startFulltextTranslation() {
+  const articleId = state.activeArticleId;
+  if (!articleId) {
+    return;
+  }
+
+  const response = await fetch(`/api/articles/${articleId}/fulltext-translation`, {
+    method: "POST",
+  });
+  const payload = await readJsonPayload(response);
+  if (!response.ok) {
+    throw new Error(payload.detail || "全文中译任务启动失败");
+  }
+
+  state.activeTranslationJobId = payload.job_id;
+  state.activeTranslationJobStartedAt = Date.now();
+  if (nodes.translationStatus) {
+    nodes.translationStatus.dataset.pendingMessage = "正在处理全文中译：准备源码、翻译 LaTeX 并尝试中文编译。";
+  }
+  const currentArticle = state.library.find((entry) => entry.article_id === articleId);
+  if (currentArticle) {
+    renderTranslationStatus(currentArticle.fulltext_translation || { available: true });
+  }
+  await pollTranslationJob(payload.job_id, articleId);
+}
+
+async function pollTranslationJob(jobId, articleId) {
+  while (true) {
+    const response = await fetch(`/api/ingest/jobs/${jobId}`);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "全文中译任务状态查询失败");
+    }
+
+    const elapsed = Math.max(0, Math.round((Date.now() - state.activeTranslationJobStartedAt) / 1000));
+    if (nodes.translationStatus) {
+      nodes.translationStatus.dataset.pendingMessage = `${payload.message} · 已耗时 ${elapsed}s`;
+    }
+    const currentArticle = state.library.find((entry) => entry.article_id === articleId);
+    if (currentArticle) {
+      renderTranslationStatus(currentArticle.fulltext_translation || { available: true });
+    }
+
+    if (payload.status === "completed") {
+      state.activeTranslationJobId = null;
+      state.activeTranslationJobStartedAt = 0;
+      if (nodes.translationStatus) {
+        delete nodes.translationStatus.dataset.pendingMessage;
+      }
+      await refreshLibrary();
+      if (payload.article) {
+        mergeArticleIntoLibrary(payload.article);
+        renderArticle(payload.article);
+      } else if (state.activeArticleId) {
+        await loadArticle(state.activeArticleId, state.workspace === "chat" ? "chat" : "reader");
+      }
+      showToast("全文中译已生成");
+      return;
+    }
+
+    if (payload.status === "failed") {
+      state.activeTranslationJobId = null;
+      state.activeTranslationJobStartedAt = 0;
+      if (nodes.translationStatus) {
+        delete nodes.translationStatus.dataset.pendingMessage;
+      }
+      const current = state.library.find((entry) => entry.article_id === articleId);
+      if (current) {
+        renderTranslationStatus(current.fulltext_translation || { available: true, status: "failed", error: payload.error || payload.message });
+      }
+      throw new Error(payload.error || payload.message || "全文中译任务失败");
+    }
+
+    await sleep(1500);
   }
 }
 
@@ -2337,11 +2492,39 @@ document.addEventListener("click", (event) => {
 
 nodes.viewToggle.addEventListener("click", (event) => {
   const button = event.target.closest(".view-toggle-button");
-  if (!button) {
+  if (!button || button.dataset.pdfVariant) {
     return;
   }
   setViewMode(button.dataset.mode);
 });
+
+if (nodes.pdfVariantToggle) {
+  nodes.pdfVariantToggle.addEventListener("click", (event) => {
+    const button = event.target.closest(".view-toggle-button");
+    if (!button) {
+      return;
+    }
+    const variant = button.dataset.pdfVariant;
+    if (!variant || button.disabled) {
+      return;
+    }
+    state.pdfVariant = variant;
+    const currentArticle = state.library.find((entry) => entry.article_id === state.activeArticleId);
+    if (currentArticle) {
+      renderPdfPane(currentArticle);
+    }
+  });
+}
+
+if (nodes.translateFulltextButton) {
+  nodes.translateFulltextButton.addEventListener("click", async () => {
+    try {
+      await startFulltextTranslation();
+    } catch (error) {
+      showToast(error.message || "全文中译任务失败");
+    }
+  });
+}
 
 if (nodes.chatArticleSelect) {
   nodes.chatArticleSelect.addEventListener("change", (event) => {

@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui38" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui38" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui39" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui39" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -205,7 +205,15 @@
                   <div class="mini-title">原始 PDF 对照</div>
                   <div id="pdfCaption" class="pdf-caption">支持根据页码引用跳转</div>
                 </div>
+                <div class="pdf-pane-tools">
+                  <div id="pdfVariantToggle" class="view-toggle pdf-variant-toggle">
+                    <button class="view-toggle-button active" data-pdf-variant="original" type="button">原文</button>
+                    <button class="view-toggle-button" data-pdf-variant="translated" type="button">全文中译</button>
+                  </div>
+                  <button id="translateFulltextButton" class="subtle-action hidden" type="button">生成全文中译</button>
+                </div>
               </div>
+              <div id="translationStatus" class="pdf-translation-status hidden"></div>
               <iframe id="pdfViewer" name="pdf-viewer" class="pdf-frame" title="原始 PDF 对照窗口"></iframe>
               <div id="pdfEmpty" class="pdf-empty hidden">当前文章没有可用的 PDF 源文件。</div>
             </aside>
@@ -346,6 +354,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui38"></script>
+    <script src="/static/app.js?v=20260301-ui39"></script>
   </body>
 </html>

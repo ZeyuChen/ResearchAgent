@@ -1874,12 +1874,32 @@ body.layout-resizing {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 16px;
 }
 
 .pdf-caption {
   margin-top: 4px;
   font-size: 0.83rem;
   color: var(--muted);
+}
+
+.pdf-pane-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pdf-variant-toggle {
+  flex-shrink: 0;
+}
+
+.pdf-translation-status {
+  margin: 6px 0 10px;
+  font-size: 0.76rem;
+  color: var(--muted);
+  min-height: 18px;
 }
 
 .pdf-frame {
