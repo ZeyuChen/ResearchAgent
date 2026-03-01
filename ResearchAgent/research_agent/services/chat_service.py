@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -96,6 +95,12 @@ class ChatService:
 
     def default_model_key(self) -> str:
         return "flash"
+
+    def request_timeout_seconds(self, model_key: str) -> float:
+        model_name = self._resolve_model_name(model_key)
+        timeout_ms = self._chat_timeout_ms(model_name)
+        # Cover context preparation (upload/cache) in addition to generation.
+        return max(90.0, timeout_ms / 1000 + 45.0)
 
     def get_session(self, *, article_id: str, model_key: str, session_id: str | None = None) -> dict[str, Any]:
         with self._lock:

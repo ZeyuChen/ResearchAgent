@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import re
 from collections import Counter
@@ -346,14 +347,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not article:
             raise HTTPException(status_code=404, detail="Article not found")
         try:
-            return chat_service.send_message(
-                article=article,
-                article_id=payload.article_id,
-                message=payload.message,
-                model_key=payload.model,
-                session_id=payload.session_id,
-                force_new_session=payload.new_session,
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    chat_service.send_message,
+                    article=article,
+                    article_id=payload.article_id,
+                    message=payload.message,
+                    model_key=payload.model,
+                    session_id=payload.session_id,
+                    force_new_session=payload.new_session,
+                ),
+                timeout=chat_service.request_timeout_seconds(payload.model),
             )
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail="整轮聊天请求超时，请稍后重试，或先切换回 Flash。") from exc
         except ChatTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except ValueError as exc:

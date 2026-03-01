@@ -23,6 +23,8 @@ const state = {
   pendingChatPlaceholder: null,
   chatForceNewSession: false,
   chatAbortController: null,
+  chatAbortReason: "",
+  chatRequestTimer: null,
   chatPendingSnapshot: null,
   activeChatRequestId: null,
   tagDraft: [],
@@ -865,6 +867,11 @@ function resetChatSession() {
 }
 
 function stopPendingChat() {
+  if (state.chatRequestTimer) {
+    window.clearTimeout(state.chatRequestTimer);
+    state.chatRequestTimer = null;
+  }
+  state.chatAbortReason = "manual";
   if (state.chatAbortController) {
     state.chatAbortController.abort();
   }
@@ -879,6 +886,7 @@ function stopPendingChat() {
   state.chatPending = false;
   state.pendingChatPlaceholder = null;
   state.chatAbortController = null;
+  state.chatAbortReason = "";
   state.chatPendingSnapshot = null;
   state.activeChatRequestId = null;
   nodes.chatStatus.textContent = "已停止生成";
@@ -888,6 +896,10 @@ function stopPendingChat() {
 function startFreshChatSession() {
   resetChatSession();
   state.chatForceNewSession = true;
+}
+
+function getChatRequestTimeoutMs(modelKey) {
+  return modelKey === "pro" ? 480000 : 150000;
 }
 
 async function loadPersistedChatSession() {
@@ -938,6 +950,8 @@ async function sendChatMessage() {
   const draft = message;
   const requestId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const abortController = new AbortController();
+  const timeoutMs = getChatRequestTimeoutMs(state.chatModelKey);
+  let requestSettled = false;
   const userMessage = {
     role: "user",
     text: draft,
@@ -945,6 +959,7 @@ async function sendChatMessage() {
   };
   state.chatPending = true;
   state.chatAbortController = abortController;
+  state.chatAbortReason = "";
   state.activeChatRequestId = requestId;
   state.chatPendingSnapshot = {
     messages: previousMessages,
@@ -963,6 +978,13 @@ async function sendChatMessage() {
   ];
   nodes.chatInput.value = "";
   renderChatView();
+  state.chatRequestTimer = window.setTimeout(() => {
+    if (state.activeChatRequestId !== requestId || state.chatAbortController !== abortController) {
+      return;
+    }
+    state.chatAbortReason = "timeout";
+    abortController.abort();
+  }, timeoutMs);
 
   try {
     const response = await fetch("/api/chat/messages", {
@@ -989,11 +1011,34 @@ async function sendChatMessage() {
     state.chatCache = payload.cache || null;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = false;
-    state.chatPendingSnapshot = null;
-    state.chatAbortController = null;
-    state.activeChatRequestId = null;
+    requestSettled = true;
   } catch (error) {
-    if (isAbortError(error) || state.activeChatRequestId !== requestId) {
+    if (state.activeChatRequestId !== requestId) {
+      return;
+    }
+    if (state.chatRequestTimer) {
+      window.clearTimeout(state.chatRequestTimer);
+      state.chatRequestTimer = null;
+    }
+    if (isAbortError(error) && state.chatAbortReason === "timeout") {
+      state.chatMessages = previousMessages;
+      state.chatSessionId = previousSessionId;
+      state.chatCache = previousCache;
+      state.pendingChatPlaceholder = null;
+      state.chatForceNewSession = previousForceNewSession;
+      state.chatMessages = [
+        ...state.chatMessages,
+        {
+          role: "assistant",
+          text: "本轮聊天请求超时，可能卡在上下文准备或网络等待。请重试，或先切换回 Flash。",
+          created_at: new Date().toISOString(),
+          error: true,
+        },
+      ];
+      requestSettled = true;
+      return;
+    }
+    if (isAbortError(error)) {
       return;
     }
     state.chatMessages = previousMessages;
@@ -1001,9 +1046,6 @@ async function sendChatMessage() {
     state.chatCache = previousCache;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = previousForceNewSession;
-    state.chatPendingSnapshot = null;
-    state.chatAbortController = null;
-    state.activeChatRequestId = null;
     state.chatMessages = [
       ...state.chatMessages,
       {
@@ -1013,13 +1055,21 @@ async function sendChatMessage() {
         error: true,
       },
     ];
+    requestSettled = true;
   } finally {
     if (state.activeChatRequestId === requestId) {
       state.chatPending = false;
+      if (state.chatRequestTimer) {
+        window.clearTimeout(state.chatRequestTimer);
+        state.chatRequestTimer = null;
+      }
       state.chatAbortController = null;
+      state.chatAbortReason = "";
       state.chatPendingSnapshot = null;
       state.activeChatRequestId = null;
-      renderChatView();
+      if (requestSettled || !state.pendingChatPlaceholder) {
+        renderChatView();
+      }
     } else if (!state.chatPending) {
       renderChatView();
     }
