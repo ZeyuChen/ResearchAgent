@@ -348,12 +348,11 @@ function renderArticleList() {
     button.type = "button";
     button.className = `article-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
-    const isWebOnly = isHtmlOnlyArticle(article);
     const tagsMarkup = buildLibraryTagMarkup(article, 3);
     const timeMarkup = buildLibraryTimeMarkup(article);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
-      ${isWebOnly ? "" : `<div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>`}
+      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>
       ${tagsMarkup ? `<div class="card-tags">${tagsMarkup}</div>` : ""}
       ${timeMarkup}
       <div class="card-mini">
@@ -381,14 +380,13 @@ function renderLibraryBrowser() {
   filtered.forEach((article) => {
     const button = document.createElement("button");
     button.type = "button";
-    const isWebOnly = isHtmlOnlyArticle(article);
-    button.className = `library-browser-card ${isWebOnly ? "web-card" : ""} ${state.activeArticleId === article.article_id ? "selected" : ""}`.trim();
+    button.className = `library-browser-card ${state.activeArticleId === article.article_id ? "selected" : ""}`.trim();
     const usage = article.llm_usage || {};
     const tags = buildLibraryTagMarkup(article, 4);
     const timeMarkup = buildLibraryTimeMarkup(article, true);
     button.innerHTML = `
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
-      ${isWebOnly ? "" : `<div class="library-browser-summary">${escapeHtml(article.summary || "")}</div>`}
+      <div class="library-browser-summary">${escapeHtml(article.summary || "")}</div>
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       ${timeMarkup}
       <div class="library-browser-footer">
