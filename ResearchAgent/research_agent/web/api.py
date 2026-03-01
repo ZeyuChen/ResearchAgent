@@ -47,7 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+        return FileResponse(static_dir / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/api/health")
     async def health() -> dict:
