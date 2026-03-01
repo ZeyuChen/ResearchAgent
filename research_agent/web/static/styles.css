@@ -1254,6 +1254,7 @@ body.layout-resizing {
 .chat-message {
   display: flex;
   min-width: 0;
+  align-items: flex-start;
 }
 
 .chat-message.user {
@@ -1276,7 +1277,8 @@ body.layout-resizing {
   padding: 14px 16px;
   background: var(--surface-soft);
   color: var(--text);
-  overflow: hidden;
+  min-width: 0;
+  overflow: visible;
 }
 
 .chat-messages.sidebar .chat-bubble {
@@ -1317,6 +1319,8 @@ body.layout-resizing {
   white-space: pre-wrap;
   line-height: 1.75;
   font-size: 0.92rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .chat-text.markdown {
@@ -1359,9 +1363,12 @@ body.layout-resizing {
 }
 
 .chat-text.markdown table {
+  display: block;
   width: 100%;
+  max-width: 100%;
   margin: 0.9em 0;
   border-collapse: collapse;
+  overflow-x: auto;
 }
 
 .chat-text.markdown th,
