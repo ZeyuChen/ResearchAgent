@@ -654,7 +654,7 @@ function renderChatMessages() {
 
   visibleMessages.forEach((message) => {
     const row = document.createElement("div");
-    row.className = `chat-message ${message.role}${message.pending ? " pending" : ""}`;
+    row.className = `chat-message ${message.role}${message.pending ? " pending" : ""}${message.error ? " error" : ""}`;
     const meta = buildChatMessageMeta(message);
     if (message.pending) {
       row.innerHTML = `
@@ -690,16 +690,28 @@ function buildChatMessageMeta(message) {
   }
   const usage = message.usage;
   const pieces = [];
+  const modelLabel = describeUsageModel(usage.model);
+  if (modelLabel) {
+    pieces.push(modelLabel);
+  }
+  if (Number(usage.estimated_cost_usd || 0) > 0) {
+    pieces.push(`本轮 $${formatUsd(usage.estimated_cost_usd)}`);
+  }
   if (usage.prompt_tokens) {
     pieces.push(`输入 ${formatNumber(usage.prompt_tokens)}`);
   }
   if (usage.output_tokens) {
     pieces.push(`输出 ${formatNumber(usage.output_tokens)}`);
   }
-  if (usage.model) {
-    pieces.push(usage.model);
-  }
   return pieces.join(" · ");
+}
+
+function describeUsageModel(modelName) {
+  const match = (state.chatOptions.models || []).find((entry) => entry.api_name === modelName);
+  if (match) {
+    return match.label;
+  }
+  return modelName || "";
 }
 
 function updateChatContextHint() {
@@ -792,11 +804,15 @@ async function sendChatMessage() {
     return;
   }
 
-  const previousMessages = [...state.chatMessages];
   const previousSessionId = state.chatSessionId;
   const previousCache = state.chatCache;
   const previousForceNewSession = state.chatForceNewSession;
   const draft = message;
+  const userMessage = {
+    role: "user",
+    text: draft,
+    created_at: new Date().toISOString(),
+  };
   state.chatPending = true;
   state.pendingChatPlaceholder = {
     role: "assistant",
@@ -804,11 +820,7 @@ async function sendChatMessage() {
   };
   state.chatMessages = [
     ...state.chatMessages,
-    {
-      role: "user",
-      text: draft,
-      created_at: new Date().toISOString(),
-    },
+    userMessage,
   ];
   nodes.chatInput.value = "";
   renderChatView();
@@ -825,7 +837,7 @@ async function sendChatMessage() {
         new_session: state.chatForceNewSession,
       }),
     });
-    const payload = await response.json();
+    const payload = await readJsonPayload(response);
     if (!response.ok) {
       throw new Error(payload.detail || "聊天请求失败");
     }
@@ -840,12 +852,43 @@ async function sendChatMessage() {
     state.chatCache = previousCache;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = previousForceNewSession;
-    nodes.chatInput.value = draft;
-    nodes.chatStatus.textContent = error.message || "聊天请求失败";
+    state.chatMessages = [
+      ...state.chatMessages,
+      {
+        role: "assistant",
+        text: buildChatFailureMessage(error, state.chatModelKey),
+        created_at: new Date().toISOString(),
+        error: true,
+      },
+    ];
   } finally {
     state.chatPending = false;
     renderChatView();
   }
+}
+
+async function readJsonPayload(response) {
+  const rawText = await response.text();
+  if (!rawText) {
+    return {};
+  }
+  try {
+    return JSON.parse(rawText);
+  } catch (_error) {
+    return {
+      detail: response.ok ? "" : "服务返回了无法解析的响应，请稍后重试。",
+    };
+  }
+}
+
+function buildChatFailureMessage(error, modelKey) {
+  const model = (state.chatOptions.models || []).find((entry) => entry.key === modelKey);
+  const modelLabel = model ? model.label : "Gemini";
+  const raw = String(error && error.message ? error.message : "").trim();
+  if (raw) {
+    return raw;
+  }
+  return `${modelLabel} 暂时没有返回结果，请稍后重试，或先切换到 Flash。`;
 }
 
 async function startUrlIngest() {

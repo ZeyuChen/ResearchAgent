@@ -19,6 +19,10 @@ from research_agent.services.storage_manager import StorageManager
 
 LOGGER = logging.getLogger(__name__)
 CHAT_HISTORY_WINDOW = 12
+CHAT_REQUEST_TIMEOUT_MS = {
+    "gemini-3-flash-preview": 120_000,
+    "gemini-3.1-pro-preview": 420_000,
+}
 MARKDOWN_CACHE_MIN_CHARS = {
     "gemini-3-flash-preview": 1200,
     "gemini-3.1-pro-preview": 4000,
@@ -44,6 +48,10 @@ class ChatSession:
     updated_at: str
     messages: list[dict[str, Any]] = field(default_factory=list)
     context: ChatContextHandle = field(default_factory=ChatContextHandle)
+
+
+class ChatTimeoutError(RuntimeError):
+    pass
 
 
 class ChatService:
@@ -152,7 +160,7 @@ class ChatService:
         try:
             response = self._generate_chat_response(prompt=prompt, context=context, model_name=model_name)
         except Exception as exc:
-            if not context.cache_name:
+            if not context.cache_name or self._is_timeout_error(exc):
                 raise
             LOGGER.warning("Gemini cached chat call failed for %s; rebuilding context: %s", article_id, exc)
             context = self._rebuild_context(article=article, model_name=model_name)
@@ -314,6 +322,7 @@ class ChatService:
         config = types.GenerateContentConfig(
             temperature=0.25,
             max_output_tokens=4096,
+            http_options=types.HttpOptions(timeout=self._chat_timeout_ms(model_name)),
         )
         if context.cache_name:
             config.cached_content = context.cache_name
@@ -323,11 +332,18 @@ class ChatService:
         else:
             contents = [prompt]
 
-        return self.llm_processor.client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            return self.llm_processor.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:
+            if self._is_timeout_error(exc):
+                raise ChatTimeoutError(
+                    f"{self._display_model_name(model_name)} 响应超时，请稍后重试，或先切换回 Flash。"
+                ) from exc
+            raise
 
     def _build_turn_prompt(
         self,
@@ -368,6 +384,30 @@ class ChatService:
             "默认关注数据、算法、工程三位一体，同时在 Infra 相关问题上展开到实现细节、性能瓶颈与工程取舍。"
             "必要时可以用少量形象类比帮助理解，但不能牺牲准确性。"
             f"当前模式：{mode}。当前文章：{article.get('title', 'Untitled')}。"
+        )
+
+    @staticmethod
+    def _chat_timeout_ms(model_name: str) -> int:
+        return int(CHAT_REQUEST_TIMEOUT_MS.get(model_name, 180_000))
+
+    @staticmethod
+    def _display_model_name(model_name: str) -> str:
+        if model_name == "gemini-3.1-pro-preview":
+            return "Gemini 3.1 Pro Preview"
+        if model_name == "gemini-3-flash-preview":
+            return "Gemini 3 Flash Preview"
+        return model_name
+
+    @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        name = exc.__class__.__name__.lower()
+        message = str(exc).lower()
+        return (
+            isinstance(exc, TimeoutError)
+            or "timeout" in name
+            or "timed out" in message
+            or "timeout" in message
+            or "deadline exceeded" in message
         )
 
     def _serialize_session(self, session: ChatSession) -> dict[str, Any]:

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from research_agent.config import Settings
 from research_agent.services.arxiv_source_gallery import ArxivSourceGalleryService
-from research_agent.services.chat_service import ChatService
+from research_agent.services.chat_service import ChatService, ChatTimeoutError
 from research_agent.services.job_manager import JobManager
 from research_agent.services.llm_processor import LLMProcessor
 from research_agent.services.markdown_renderer import extract_pdf_page_refs, inject_pdf_page_links, render_markdown
@@ -321,6 +321,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 session_id=payload.session_id,
                 force_new_session=payload.new_session,
             )
+        except ChatTimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
