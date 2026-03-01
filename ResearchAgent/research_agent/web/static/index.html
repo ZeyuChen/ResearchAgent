@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui25" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui25" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui26" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui26" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -25,9 +25,16 @@
             </svg>
           </button>
           <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
-            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui25" alt="ResearchAgent" />
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui26" alt="ResearchAgent" />
             <h1>ResearchAgent</h1>
           </a>
+        </div>
+        <div class="app-bar-right">
+          <div class="view-toggle app-bar-view-toggle" id="viewToggle">
+            <button class="view-toggle-button active" data-mode="both" type="button">双栏</button>
+            <button class="view-toggle-button" data-mode="analysis" type="button">仅解析</button>
+            <button class="view-toggle-button" data-mode="pdf" type="button">仅原文</button>
+          </div>
         </div>
       </header>
 
@@ -156,11 +163,6 @@
               <div class="meta-tools">
                 <div id="metaBadges" class="badge-row"></div>
                 <button id="editTagsButton" class="subtle-action" type="button" disabled>编辑标签</button>
-              </div>
-              <div class="view-toggle" id="viewToggle">
-                <button class="view-toggle-button active" data-mode="both" type="button">双栏</button>
-                <button class="view-toggle-button" data-mode="analysis" type="button">仅解析</button>
-                <button class="view-toggle-button" data-mode="pdf" type="button">仅原文</button>
               </div>
             </div>
           </section>
@@ -343,6 +345,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui25"></script>
+    <script src="/static/app.js?v=20260301-ui26"></script>
   </body>
 </html>

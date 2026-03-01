@@ -220,14 +220,18 @@ function renderFolders() {
   topicTitle.textContent = "主题文件夹";
   topicSection.appendChild(topicTitle);
 
+  const topicCloud = document.createElement("div");
+  topicCloud.className = "topic-folder-cloud";
+
   state.topics.forEach((topic) => {
-    topicSection.appendChild(createFolderButton({
+    topicCloud.appendChild(createTopicFolderButton({
       key: `topic:${topic.name}`,
       label: topic.name,
       count: topic.count,
       kind: "topic",
     }));
   });
+  topicSection.appendChild(topicCloud);
   nodes.folderTree.appendChild(topicSection);
 }
 
@@ -253,6 +257,23 @@ function createFolderButton(entry) {
       <span class="folder-label">${escapeHtml(entry.label)}</span>
     </span>
     <span class="folder-count">${entry.count}</span>
+  `;
+  button.addEventListener("click", () => {
+    state.selectedFolder = entry.key;
+    renderFolders();
+    renderArticleList();
+    renderLibraryBrowser();
+  });
+  return button;
+}
+
+function createTopicFolderButton(entry) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `topic-folder-pill ${state.selectedFolder === entry.key ? "active" : ""}`;
+  button.innerHTML = `
+    <span class="topic-folder-name">#${escapeHtml(entry.label)}</span>
+    <span class="topic-folder-count">${entry.count}</span>
   `;
   button.addEventListener("click", () => {
     state.selectedFolder = entry.key;
