@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Callable
@@ -47,6 +48,98 @@ class LLMProcessor:
     def generate_article(self, stored_item: StoredItem) -> str:
         article, _ = self.generate_article_with_metrics(stored_item)
         return article
+
+    def summarize_webpage(
+        self,
+        stored_item: StoredItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
+        html_path = stored_item.source_files.get("source.html")
+        if not html_path or not html_path.exists():
+            return stored_item.item.summary, self._empty_usage()
+
+        if not self.client:
+            return self._fallback_web_summary(stored_item), self._empty_usage()
+
+        content_parts = self._build_webpage_content_parts(
+            html_path=html_path,
+            item=stored_item.item,
+            instruction=(
+                "请基于这个网页的渲染后内容、截图和图片素材，输出一个高质量摘要。"
+                "请以 JSON 返回，格式为 {\"summary\":\"...\"}，不要输出其他字段。"
+                "只输出最终摘要正文，不要解释规则，不要复述要求，不要出现“摘要：”“250字”“要求”等提示语。"
+                "摘要必须控制在 250 个中文字符以内，不要照抄网页开头，要提炼主题、关键方法、重要结果或结论，"
+                "语言克制专业，适合作为知识库列表摘要。"
+            ),
+            text_limit=24000,
+            html_limit=18000,
+            progress_callback=progress_callback,
+            upload_progress=24,
+        )
+        self._notify(progress_callback, 30, "网页内容已就绪，Gemini 正在生成精炼摘要。")
+        try:
+            response = self.client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=content_parts,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                ),
+            )
+            usage = self._extract_usage(response)
+            summary = self._normalize_web_summary(self._extract_summary_text(response.text or ""))
+            if self._looks_like_web_summary_prompt_leak(summary):
+                summary = ""
+            if not summary:
+                summary = self._fallback_web_summary(stored_item)
+            return summary, usage
+        except Exception as exc:
+            LOGGER.warning("Gemini web summary generation failed for %s: %s", stored_item.item.title, exc)
+            return self._fallback_web_summary(stored_item), self._empty_usage()
+
+    def summarize_article_markdown(
+        self,
+        article_markdown: str,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
+        if not article_markdown.strip():
+            return self._normalize_web_summary(item.summary or item.title), self._empty_usage()
+
+        if not self.client:
+            return self._fallback_article_summary(article_markdown, item), self._empty_usage()
+
+        self._notify(progress_callback, 88, "Gemini 正在压缩生成知识库摘要。")
+        try:
+            response = self.client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=(
+                    "下面是一篇基于原始网页或技术博客生成的深度解析文章。"
+                    "请把它压缩成一个适合知识库列表展示的短摘要。"
+                    "请以 JSON 返回，格式为 {\"summary\":\"...\"}，不要输出其他字段。"
+                    "只输出最终摘要正文，不要解释规则，不要复述要求，不要出现“摘要：”字样。"
+                    "摘要必须控制在 250 个中文字符以内，优先保留主题、关键技术点、重要结果与结论。\n\n"
+                    f"标题：{item.title}\n"
+                    f"来源：{item.source_url}\n\n"
+                    f"解析正文：\n{article_markdown[:20000]}"
+                ),
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                ),
+            )
+            usage = self._extract_usage(response)
+            summary = self._normalize_web_summary(self._extract_summary_text(response.text or ""))
+            if self._looks_like_web_summary_prompt_leak(summary):
+                summary = ""
+            if not summary:
+                summary = self._fallback_article_summary(article_markdown, item)
+            return summary, usage
+        except Exception as exc:
+            LOGGER.warning("Gemini article summary generation failed for %s: %s", item.title, exc)
+            return self._fallback_article_summary(article_markdown, item), self._empty_usage()
 
     def generate_article_with_metrics(
         self,
@@ -102,26 +195,19 @@ class LLMProcessor:
         item: ResearchItem,
         progress_callback: ProgressCallback | None = None,
     ) -> tuple[str, dict]:
-        html_text = html_path.read_text(encoding="utf-8", errors="ignore")
-        text_path = html_path.with_name("source.txt")
-        text_excerpt = ""
-        if text_path.exists():
-            text_excerpt = text_path.read_text(encoding="utf-8", errors="ignore")[:50000]
-
-        content_parts: list[object] = [
-            (
+        content_parts = self._build_webpage_content_parts(
+            html_path=html_path,
+            item=item,
+            instruction=(
                 "下面是技术报告、博客或网页的渲染后内容。"
                 "请基于网页文字、截图和图片素材，输出一篇高质量 Markdown 技术解析文章。"
-                "需要兼顾数据、算法、工程三条主线，并对工程 / Infra 技术点逐条拆解。\n\n"
-                f"标题：{item.title}\n"
-                f"来源：{item.source_url}\n"
-                f"文本抽取：\n{text_excerpt}\n\n"
-                f"HTML 片段：\n{html_text[:40000]}"
-            )
-        ]
-        for image_path in self._collect_visual_assets(html_path.parent):
-            self._notify(progress_callback, 60, "正在上传网页截图与图片素材到 Gemini。")
-            content_parts.append(self.client.files.upload(file=str(image_path)))
+                "需要兼顾数据、算法、工程三条主线，并对工程 / Infra 技术点逐条拆解。"
+            ),
+            text_limit=50000,
+            html_limit=40000,
+            progress_callback=progress_callback,
+            upload_progress=60,
+        )
 
         self._notify(progress_callback, 74, "网页内容已就绪，Gemini 正在生成详细解读。")
         response = self.client.models.generate_content(
@@ -135,6 +221,36 @@ class LLMProcessor:
         )
         usage = self._extract_usage(response)
         return (response.text or "").strip() or self._fallback_article(item), usage
+
+    def _build_webpage_content_parts(
+        self,
+        html_path: Path,
+        item: ResearchItem,
+        instruction: str,
+        text_limit: int,
+        html_limit: int,
+        progress_callback: ProgressCallback | None,
+        upload_progress: int,
+    ) -> list[object]:
+        html_text = html_path.read_text(encoding="utf-8", errors="ignore")
+        text_path = html_path.with_name("source.txt")
+        text_excerpt = ""
+        if text_path.exists():
+            text_excerpt = text_path.read_text(encoding="utf-8", errors="ignore")[:text_limit]
+
+        content_parts: list[object] = [
+            (
+                f"{instruction}\n\n"
+                f"标题：{item.title}\n"
+                f"来源：{item.source_url}\n"
+                f"文本抽取：\n{text_excerpt}\n\n"
+                f"HTML 片段：\n{html_text[:html_limit]}"
+            )
+        ]
+        for image_path in self._collect_visual_assets(html_path.parent):
+            self._notify(progress_callback, upload_progress, "正在上传网页截图与图片素材到 Gemini。")
+            content_parts.append(self.client.files.upload(file=str(image_path)))
+        return content_parts
 
     @staticmethod
     def _collect_visual_assets(item_dir: Path) -> list[Path]:
@@ -178,6 +294,107 @@ class LLMProcessor:
 
 该条目已通过关键词初筛，建议在配置 `GEMINI_API_KEY` 后执行完整的全文解读流程，以获得更高质量的专家分析。
 """
+
+    @classmethod
+    def merge_usage(cls, *usage_entries: dict) -> dict:
+        valid_entries = [entry for entry in usage_entries if entry]
+        if not valid_entries:
+            return cls._empty_usage()
+
+        merged = cls._empty_usage()
+        merged["model"] = next((entry.get("model", "") for entry in reversed(valid_entries) if entry.get("model")), "")
+        merged["pricing_basis"] = next(
+            (entry.get("pricing_basis", "") for entry in reversed(valid_entries) if entry.get("pricing_basis")),
+            "",
+        )
+        for key in ("prompt_tokens", "output_tokens", "total_tokens", "input_cost_usd", "output_cost_usd", "estimated_cost_usd"):
+            merged[key] = round(sum(float(entry.get(key, 0) or 0) for entry in valid_entries), 6)
+            if key.endswith("tokens"):
+                merged[key] = int(merged[key])
+        return merged
+
+    @staticmethod
+    def _fallback_web_summary(stored_item: StoredItem) -> str:
+        text_path = stored_item.source_files.get("source.txt")
+        text = ""
+        if text_path and text_path.exists():
+            text = text_path.read_text(encoding="utf-8", errors="ignore")
+        normalized = " ".join(text.split())
+        if not normalized:
+            normalized = stored_item.item.title
+        return LLMProcessor._normalize_web_summary(normalized)
+
+    @staticmethod
+    def _fallback_article_summary(article_markdown: str, item: ResearchItem) -> str:
+        for block in article_markdown.split("\n\n"):
+            candidate = " ".join(line.strip() for line in block.splitlines() if line.strip())
+            if not candidate:
+                continue
+            if candidate.startswith("#") or candidate.startswith("```"):
+                continue
+            if len(candidate) < 24:
+                continue
+            return LLMProcessor._normalize_web_summary(candidate)
+        return LLMProcessor._normalize_web_summary(item.summary or item.title)
+
+    @staticmethod
+    def _normalize_web_summary(text: str) -> str:
+        normalized = " ".join(text.split())
+        while normalized.startswith(("#", "-", "*", " ")):
+            normalized = normalized[1:].lstrip()
+        for prefix in ("摘要：", "摘要:", "summary:", "Summary:"):
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :].lstrip()
+        if len(normalized) <= 250:
+            return normalized
+        clipped = normalized[:250].rstrip("，。；：,.;: ")
+        return f"{clipped}..."
+
+    @staticmethod
+    def _looks_like_web_summary_prompt_leak(text: str) -> bool:
+        lowered = text.lower()
+        if not lowered:
+            return False
+        leak_markers = (
+            "250 chinese characters",
+            "250字",
+            "250 个中文字符",
+            "do not",
+            "don't",
+            "只输出",
+            "不要复述",
+            "requirements",
+            "要求：",
+            "here is the json",
+            "```",
+        )
+        if any(marker in lowered for marker in leak_markers):
+            return True
+        return lowered.startswith(("1)", "1.", "2)", "2.", "please ", "要求"))
+
+    @staticmethod
+    def _extract_summary_text(raw_text: str) -> str:
+        payload = raw_text.strip()
+        if not payload:
+            return ""
+        decoded = LLMProcessor._decode_summary_payload(payload)
+        if decoded is None:
+            start = payload.find("{")
+            end = payload.rfind("}")
+            if start != -1 and end > start:
+                decoded = LLMProcessor._decode_summary_payload(payload[start : end + 1])
+        if decoded is None:
+            return payload
+        if isinstance(decoded, dict):
+            return str(decoded.get("summary", "")).strip()
+        return payload
+
+    @staticmethod
+    def _decode_summary_payload(payload: str):
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            return None
 
     def _extract_usage(self, response: types.GenerateContentResponse) -> dict:
         usage = response.usage_metadata

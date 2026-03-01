@@ -134,11 +134,10 @@ class ManualIngestService:
     ) -> dict:
         self._notify(progress_callback, 14, "正在加载网页，优先尝试浏览器渲染动态内容。")
         captured = self.page_capture.capture(url)
-        summary = captured.text[:500].strip() or f"网页内容：{captured.final_url}"
         item = ResearchItem(
             source="manual-web",
             title=captured.title or captured.final_url,
-            summary=summary,
+            summary="网页内容已归档，正在生成摘要。",
             source_url=captured.final_url,
             html_url=captured.final_url,
             published_at=datetime.now().isoformat(timespec="seconds"),
@@ -151,11 +150,19 @@ class ManualIngestService:
         )
         stored_item = self.storage_manager.persist_item(item, captured.source_files)
         self._notify(progress_callback, 34, "网页素材已归档，准备调用 Gemini 进行多模态解读。")
-        article, usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
+        article, article_usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
+        summary, summary_usage = self.llm_processor.summarize_article_markdown(
+            article,
+            stored_item.item,
+            progress_callback=progress_callback,
+        )
+        stored_item.item.summary = summary
+        usage = self.llm_processor.merge_usage(article_usage, summary_usage)
         self.storage_manager.write_article(stored_item, article)
         self.storage_manager.update_metadata(
             stored_item.metadata_path,
             {
+                "summary": summary,
                 "llm_usage": usage,
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
             },
