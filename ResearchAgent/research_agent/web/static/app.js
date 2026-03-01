@@ -80,6 +80,7 @@ const nodes = {
   ingestModal: document.getElementById("ingestModal"),
   closeIngestModal: document.getElementById("closeIngestModal"),
   selectionFlomoButton: document.getElementById("selectionFlomoButton"),
+  toastNotice: document.getElementById("toastNotice"),
   flomoModal: document.getElementById("flomoModal"),
   closeFlomoModal: document.getElementById("closeFlomoModal"),
   flomoPreviewInput: document.getElementById("flomoPreviewInput"),
@@ -98,6 +99,8 @@ const nodes = {
 
 let ingestSuggestionTimer = null;
 let ingestSuggestionRequestId = 0;
+let toastTimer = null;
+let toastFadeTimer = null;
 
 async function bootstrap() {
   loadSidebarWidthPreference();
@@ -1037,6 +1040,29 @@ function showStatus(message, tone) {
   nodes.ingestStatus.textContent = message;
 }
 
+function showToast(message) {
+  if (!message) {
+    return;
+  }
+  if (toastTimer) {
+    window.clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  if (toastFadeTimer) {
+    window.clearTimeout(toastFadeTimer);
+    toastFadeTimer = null;
+  }
+  nodes.toastNotice.textContent = message;
+  nodes.toastNotice.classList.remove("hidden", "fading");
+  toastFadeTimer = window.setTimeout(() => {
+    nodes.toastNotice.classList.add("fading");
+  }, 1800);
+  toastTimer = window.setTimeout(() => {
+    nodes.toastNotice.classList.add("hidden");
+    nodes.toastNotice.classList.remove("fading");
+  }, 2150);
+}
+
 function setProgress(percent, label, hint) {
   nodes.progressShell.classList.remove("hidden");
   nodes.progressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -1403,7 +1429,7 @@ function bindFlomoInteractions() {
         state.flomoDraft.articleId,
       );
       closeFlomoModal();
-      nodes.chatStatus.textContent = "已保存到 Flomo";
+      showToast("已保存到 Flomo");
     } catch (error) {
       nodes.chatStatus.textContent = error.message || "保存到 Flomo 失败";
     }
