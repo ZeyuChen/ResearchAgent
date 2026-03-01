@@ -1072,7 +1072,9 @@ function setProgress(percent, label, hint) {
 }
 
 async function buildFlomoPreview(content, sourceKind, articleId = null) {
-  const text = String(content || "").trim();
+  const text = sourceKind === "selection"
+    ? sanitizeFlomoSelectionText(content)
+    : String(content || "").trim();
   if (!text) {
     throw new Error("没有可保存的内容");
   }
@@ -1090,6 +1092,16 @@ async function buildFlomoPreview(content, sourceKind, articleId = null) {
     throw new Error(payload.detail || "生成 Flomo 预览失败");
   }
   return payload.content || "";
+}
+
+function sanitizeFlomoSelectionText(content) {
+  let text = String(content || "");
+  text = text.replace(/\[\s*P\d{1,4}(?:\s*,\s*P\d{1,4})*\s*\]/g, " ");
+  text = text.replace(/(^|[\s([{\u3000])P\d{1,4}(?=$|[\s)\]}，。；：、,.!?！？])/g, "$1");
+  text = text.replace(/\s+([，。；：、,.!?！？])/g, "$1");
+  text = text.replace(/[ \t]+\n/g, "\n");
+  text = text.replace(/\n{3,}/g, "\n\n");
+  return text.trim();
 }
 
 function openFlomoModal(content, sourceKind) {
