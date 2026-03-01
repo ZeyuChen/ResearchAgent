@@ -35,6 +35,10 @@ const nodes = {
   previewStrip: document.getElementById("previewStrip"),
   previewTitle: document.getElementById("previewTitle"),
   pdfPreviewGallery: document.getElementById("pdfPreviewGallery"),
+  imageLightbox: document.getElementById("imageLightbox"),
+  lightboxImage: document.getElementById("lightboxImage"),
+  lightboxTitle: document.getElementById("lightboxTitle"),
+  lightboxClose: document.getElementById("lightboxClose"),
   pdfPane: document.getElementById("pdfPane"),
   pdfViewer: document.getElementById("pdfViewer"),
   pdfEmpty: document.getElementById("pdfEmpty"),
@@ -332,7 +336,7 @@ function renderVisualGallery(article) {
         <span>${escapeHtml(figure.title || figure.source_name || "论文配图")}</span>
       `;
       button.addEventListener("click", () => {
-        window.open(figure.url, "_blank", "noopener");
+        openLightbox(figure.url, figure.title || figure.source_name || "论文配图");
       });
       nodes.pdfPreviewGallery.appendChild(button);
     });
@@ -490,6 +494,20 @@ function setIntakeBusy(isBusy) {
   nodes.uploadDropzone.classList.toggle("disabled", isBusy);
 }
 
+function openLightbox(imageUrl, title) {
+  nodes.lightboxImage.src = imageUrl;
+  nodes.lightboxImage.alt = title || "图像预览";
+  nodes.lightboxTitle.textContent = title || "图像预览";
+  nodes.imageLightbox.classList.remove("hidden");
+  document.body.classList.add("lightbox-open");
+}
+
+function closeLightbox() {
+  nodes.imageLightbox.classList.add("hidden");
+  nodes.lightboxImage.src = "";
+  document.body.classList.remove("lightbox-open");
+}
+
 function showStatus(message, tone) {
   if (!message) {
     nodes.ingestStatus.className = "status-banner hidden";
@@ -562,6 +580,24 @@ function bindUploadInteractions() {
   });
 }
 
+function bindLightboxInteractions() {
+  nodes.lightboxClose.addEventListener("click", closeLightbox);
+  nodes.imageLightbox.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.dataset.closeLightbox === "true") {
+      closeLightbox();
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !nodes.imageLightbox.classList.contains("hidden")) {
+      closeLightbox();
+    }
+  });
+}
+
 function compactTokens(value) {
   const numeric = Number(value || 0);
   if (!numeric) {
@@ -625,6 +661,7 @@ nodes.viewToggle.addEventListener("click", (event) => {
 });
 
 bindUploadInteractions();
+bindLightboxInteractions();
 applyViewMode();
 
 bootstrap().catch((error) => {
