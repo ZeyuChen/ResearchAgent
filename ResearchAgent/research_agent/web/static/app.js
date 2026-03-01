@@ -1089,6 +1089,20 @@ nodes.chatComposer.addEventListener("submit", async (event) => {
   await sendChatMessage();
 });
 
+nodes.chatInput.addEventListener("keydown", async (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+  if (!event.metaKey) {
+    return;
+  }
+  event.preventDefault();
+  if (state.chatPending) {
+    return;
+  }
+  await sendChatMessage();
+});
+
 bindUploadInteractions();
 bindLightboxInteractions();
 bindIngestModalInteractions();
