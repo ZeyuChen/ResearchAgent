@@ -17,6 +17,7 @@ const state = {
   chatMessages: [],
   chatPending: false,
   chatCache: null,
+  pendingChatPlaceholder: null,
 };
 
 const nodes = {
@@ -447,7 +448,11 @@ function renderChatView() {
 
 function renderChatMessages() {
   nodes.chatMessages.innerHTML = "";
-  if (!state.chatMessages.length) {
+  const visibleMessages = state.pendingChatPlaceholder
+    ? [...state.chatMessages, state.pendingChatPlaceholder]
+    : state.chatMessages;
+
+  if (!visibleMessages.length) {
     const empty = document.createElement("div");
     empty.className = "chat-empty";
     empty.textContent = state.chatArticleId
@@ -457,17 +462,30 @@ function renderChatMessages() {
     return;
   }
 
-  state.chatMessages.forEach((message) => {
+  visibleMessages.forEach((message) => {
     const row = document.createElement("div");
-    row.className = `chat-message ${message.role}`;
+    row.className = `chat-message ${message.role}${message.pending ? " pending" : ""}`;
     const meta = buildChatMessageMeta(message);
-    row.innerHTML = `
-      <div class="chat-bubble">
-        <div class="chat-role">${message.role === "user" ? "你" : "ResearchAgent"}</div>
-        <div class="chat-text">${escapeHtml(message.text || "")}</div>
-        ${meta ? `<div class="chat-bubble-meta">${meta}</div>` : ""}
-      </div>
-    `;
+    if (message.pending) {
+      row.innerHTML = `
+        <div class="chat-bubble">
+          <div class="chat-role">ResearchAgent</div>
+          <div class="typing-indicator" aria-label="Gemini 正在思考">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </div>
+        </div>
+      `;
+    } else {
+      row.innerHTML = `
+        <div class="chat-bubble">
+          <div class="chat-role">${message.role === "user" ? "你" : "ResearchAgent"}</div>
+          <div class="chat-text">${escapeHtml(message.text || "")}</div>
+          ${meta ? `<div class="chat-bubble-meta">${meta}</div>` : ""}
+        </div>
+      `;
+    }
     nodes.chatMessages.appendChild(row);
   });
   nodes.chatMessages.scrollTop = nodes.chatMessages.scrollHeight;
@@ -531,6 +549,7 @@ function resetChatSession() {
   state.chatSessionId = null;
   state.chatMessages = [];
   state.chatCache = null;
+  state.pendingChatPlaceholder = null;
 }
 
 async function sendChatMessage() {
@@ -545,7 +564,23 @@ async function sendChatMessage() {
     return;
   }
 
+  const previousMessages = [...state.chatMessages];
+  const previousSessionId = state.chatSessionId;
+  const draft = message;
   state.chatPending = true;
+  state.pendingChatPlaceholder = {
+    role: "assistant",
+    pending: true,
+  };
+  state.chatMessages = [
+    ...state.chatMessages,
+    {
+      role: "user",
+      text: draft,
+      created_at: new Date().toISOString(),
+    },
+  ];
+  nodes.chatInput.value = "";
   renderChatView();
 
   try {
@@ -554,7 +589,7 @@ async function sendChatMessage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         article_id: article.article_id,
-        message,
+        message: draft,
         model: state.chatModelKey,
         session_id: state.chatSessionId,
       }),
@@ -566,8 +601,12 @@ async function sendChatMessage() {
     state.chatSessionId = payload.session_id;
     state.chatMessages = payload.messages || [];
     state.chatCache = payload.cache || null;
-    nodes.chatInput.value = "";
+    state.pendingChatPlaceholder = null;
   } catch (error) {
+    state.chatMessages = previousMessages;
+    state.chatSessionId = previousSessionId;
+    state.pendingChatPlaceholder = null;
+    nodes.chatInput.value = draft;
     nodes.chatStatus.textContent = error.message || "聊天请求失败";
   } finally {
     state.chatPending = false;
