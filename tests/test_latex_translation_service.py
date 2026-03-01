@@ -85,6 +85,7 @@ def test_strip_tex_comments_removes_full_and_trailing_comments() -> None:
     assert "keep heading" not in stripped
     assert "95\\%" in stripped
     assert "trailing note" not in stripped
+    assert not stripped.startswith("\n")
 
 
 def test_strip_disabled_packages_removes_fontawesome_and_keeps_others() -> None:
@@ -114,7 +115,7 @@ def test_sanitize_inline_section_commands_removes_headings_from_table_rows() -> 
 def test_sanitize_conflicting_cjk_commands_removes_cjk_wrappers() -> None:
     source = "\\begin{CJK}{UTF8}{gbsn}\n正文\n\\end{CJK}\n"
 
-    sanitized, fixes = LatexTranslationService._sanitize_conflicting_cjk_commands(source, ["CJKutf8"])
+    sanitized, fixes = LatexTranslationService._sanitize_conflicting_cjk_commands(source, {"CJKutf8"})
 
     assert fixes == 2
     assert "\\begin{CJK}" not in sanitized
@@ -135,3 +136,55 @@ def test_sanitize_table_section_commands_removes_section_inside_tabular() -> Non
     assert fixes == 1
     assert "\\subsubsection" not in sanitized
     assert "\\begin{tabular}{ll}" in sanitized
+
+
+def test_protect_fragile_latex_shields_table_and_footnote() -> None:
+    source = (
+        "正文段落。\n"
+        "\\footnote{A note that should stay stable.}\n"
+        "\\begin{table}\nA & B \\\\\n\\end{table}\n"
+    )
+
+    protected, replacements = LatexTranslationService._protect_fragile_latex(source)
+    restored = LatexTranslationService._restore_protected_latex(protected, replacements)
+
+    assert "RAKEEPBLOCKTOKEN" in protected
+    assert "\\footnote{" not in protected
+    assert "\\begin{table}" not in protected
+    assert restored == source
+
+
+def test_protected_tokens_intact_requires_exact_placeholder_round_trip() -> None:
+    replacements = {
+        "RAKEEPBLOCKTOKEN0001": "\\begin{figure}A\\end{figure}",
+        "RAKEEPBLOCKTOKEN0002": "\\footnote{keep}",
+    }
+
+    assert LatexTranslationService._protected_tokens_intact(
+        "prefix RAKEEPBLOCKTOKEN0001 mid RAKEEPBLOCKTOKEN0002 suffix",
+        replacements,
+    )
+    assert not LatexTranslationService._protected_tokens_intact(
+        "prefix 0001 mid RAKEEPBLOCKTOKEN0002 suffix",
+        replacements,
+    )
+
+
+def test_translation_looks_usable_rejects_truncated_structure() -> None:
+    original = (
+        "\\section{Title}\n"
+        "A long paragraph that should remain present after translation.\n"
+        "\\paragraph{Point A} Details.\n"
+        "\\paragraph{Point B} More details.\n"
+        "\\begin{itemize}\n"
+        "\\item First\n"
+        "\\item Second\n"
+        "\\end{itemize}\n"
+    )
+    translated = (
+        "\\section{标题}\n"
+        "简短内容。\n"
+        "\\paragraph{点 A} 细节。\n"
+    )
+
+    assert not LatexTranslationService._translation_looks_usable(original, translated, False)

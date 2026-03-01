@@ -30,10 +30,12 @@ LOGGER = logging.getLogger(__name__)
 ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}(?:v\d+)?)")
 DOCUMENTCLASS_RE = re.compile(r"\\documentclass(?:\[[^\]]*\])?{[^}]+}")
 BEGIN_DOCUMENT_RE = re.compile(r"\\begin{document}")
+LEADING_COMMAND_RE = re.compile(r"^\s*(\\[A-Za-z@]+(?:\*?)?)")
 TRANSLATION_FENCE_RE = re.compile(r"^```(?:latex|tex)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 COMMENT_RE = re.compile(r"(?<!\\)%.*$", re.MULTILINE)
 USEPACKAGE_LINE_RE = re.compile(r"^(?P<indent>\s*)\\usepackage(?P<options>\[[^\]]*\])?{(?P<packages>[^}]+)}(?P<trailing>\s*)$")
 FONTAWESOME_COMMAND_RE = re.compile(r"\\(fa[A-Za-z]+)\b")
+BEGIN_ENV_RE = re.compile(r"\\begin{([A-Za-z*]+)}")
 SECTION_COMMANDS = (
     "part",
     "chapter",
@@ -63,6 +65,16 @@ OPTIONAL_PACKAGE_TFM_PROBES = {
     "fontawesome5": "FontAwesome5FreeSolid-900.tfm",
 }
 CONFLICTING_CJK_PACKAGES = {"CJKutf8", "CJK"}
+FRAGILE_ENVIRONMENT_PATTERNS = (
+    re.compile(r"\\begin{table\*}.*?\\end{table\*}", re.DOTALL),
+    re.compile(r"\\begin{table}.*?\\end{table}", re.DOTALL),
+    re.compile(r"\\begin{figure\*}.*?\\end{figure\*}", re.DOTALL),
+    re.compile(r"\\begin{figure}.*?\\end{figure}", re.DOTALL),
+    re.compile(r"\\begin{longtable}.*?\\end{longtable}", re.DOTALL),
+    re.compile(r"\\begin{tabularx}.*?\\end{tabularx}", re.DOTALL),
+    re.compile(r"\\begin{tabular\*}.*?\\end{tabular\*}", re.DOTALL),
+    re.compile(r"\\begin{tabular}.*?\\end{tabular}", re.DOTALL),
+)
 CHINESE_SUPPORT_BLOCK = r"""
 % ResearchAgent Chinese translation support begin
 \usepackage{iftex}
@@ -250,28 +262,40 @@ class LatexTranslationService:
             return "", self.llm_processor._empty_usage(), False
 
         stripped_original = self._strip_tex_comments(original)
+        protected_original, protected_blocks = self._protect_fragile_latex(stripped_original)
 
         if self._looks_like_bibliography_file(tex_path, stripped_original):
             return stripped_original, self.llm_processor._empty_usage(), stripped_original != original
 
-        if len(stripped_original) <= MAX_INLINE_TEX_CHARS:
+        if len(protected_original) <= MAX_INLINE_TEX_CHARS:
             try:
                 translated, usage = self._translate_with_retries(
-                    stripped_original,
+                    protected_original,
                     tex_path,
                     is_root=is_root,
                     is_fragment=False,
                     max_output_tokens=8192,
                 )
+                if not self._protected_tokens_intact(translated, protected_blocks):
+                    LOGGER.warning(
+                        "Protected LaTeX blocks were modified for %s; retrying with chunked mode",
+                        tex_path.name,
+                    )
+                    raise RuntimeError("Protected LaTeX placeholders were modified")
+                translated = self._restore_protected_latex(translated, protected_blocks)
                 if self._translation_looks_usable(stripped_original, translated, is_root):
                     return translated, usage, translated != stripped_original
                 LOGGER.warning("Translated TeX output looks unsafe for %s; retrying with chunked mode", tex_path.name)
             except Exception as exc:
                 LOGGER.warning("Whole-file TeX translation failed for %s: %s; retrying in chunks", tex_path.name, exc)
 
-        translated, usage, changed = self._translate_tex_in_chunks(stripped_original, tex_path)
+        translated, usage, changed = self._translate_tex_in_chunks(protected_original, tex_path)
+        if not self._protected_tokens_intact(translated, protected_blocks):
+            LOGGER.warning("Chunked TeX output modified protected blocks for %s; keeping original file", tex_path.name)
+            return stripped_original, usage, stripped_original != original
+        translated = self._restore_protected_latex(translated, protected_blocks)
         if self._translation_looks_usable(stripped_original, translated, is_root):
-            return translated, usage, changed
+            return translated, usage, translated != stripped_original
 
         LOGGER.warning("Chunked TeX output still looks unsafe for %s; keeping original file", tex_path.name)
         return stripped_original, usage, stripped_original != original
@@ -420,6 +444,103 @@ class LatexTranslationService:
         return [chunk for chunk in chunks if chunk]
 
     @staticmethod
+    def _protect_fragile_latex(source_text: str) -> tuple[str, dict[str, str]]:
+        protected = source_text
+        replacements: dict[str, str] = {}
+        counter = 1
+
+        for pattern in FRAGILE_ENVIRONMENT_PATTERNS:
+            while True:
+                match = pattern.search(protected)
+                if not match:
+                    break
+                token = f"RAKEEPBLOCKTOKEN{counter:04d}"
+                replacements[token] = match.group(0)
+                protected = f"{protected[:match.start()]}{token}{protected[match.end():]}"
+                counter += 1
+
+        for command_name in ("footnote",):
+            protected, replacements, counter = LatexTranslationService._protect_command_arguments(
+                protected,
+                command_name,
+                replacements,
+                counter,
+            )
+
+        return protected, replacements
+
+    @staticmethod
+    def _protect_command_arguments(
+        source_text: str,
+        command_name: str,
+        replacements: dict[str, str],
+        counter: int,
+    ) -> tuple[str, dict[str, str], int]:
+        cursor = 0
+        command_prefix = f"\\{command_name}"
+        result_parts: list[str] = []
+
+        while cursor < len(source_text):
+            start = source_text.find(command_prefix, cursor)
+            if start == -1:
+                result_parts.append(source_text[cursor:])
+                break
+
+            result_parts.append(source_text[cursor:start])
+            idx = start + len(command_prefix)
+            while idx < len(source_text) and source_text[idx].isspace():
+                idx += 1
+            if idx < len(source_text) and source_text[idx] == "[":
+                idx = LatexTranslationService._find_matching_delimiter(source_text, idx, "[", "]")
+                if idx == -1:
+                    result_parts.append(source_text[start:])
+                    break
+            while idx < len(source_text) and source_text[idx].isspace():
+                idx += 1
+            if idx >= len(source_text) or source_text[idx] != "{":
+                result_parts.append(source_text[start:start + len(command_prefix)])
+                cursor = start + len(command_prefix)
+                continue
+
+            end = LatexTranslationService._find_matching_delimiter(source_text, idx, "{", "}")
+            if end == -1:
+                result_parts.append(source_text[start:])
+                break
+
+            token = f"RAKEEPBLOCKTOKEN{counter:04d}"
+            replacements[token] = source_text[start:end]
+            result_parts.append(token)
+            counter += 1
+            cursor = end
+
+        return "".join(result_parts), replacements, counter
+
+    @staticmethod
+    def _find_matching_delimiter(source_text: str, start_index: int, opener: str, closer: str) -> int:
+        depth = 0
+        escaped = False
+        for index in range(start_index, len(source_text)):
+            char = source_text[index]
+            if char == opener and not escaped:
+                depth += 1
+            elif char == closer and not escaped:
+                depth -= 1
+                if depth == 0:
+                    return index + 1
+            if char == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+        return -1
+
+    @staticmethod
+    def _restore_protected_latex(source_text: str, replacements: dict[str, str]) -> str:
+        restored = source_text
+        for token, original in replacements.items():
+            restored = restored.replace(token, original)
+        return restored
+
+    @staticmethod
     def _strip_tex_comments(source_text: str) -> str:
         cleaned_lines: list[str] = []
         for line in source_text.splitlines(keepends=True):
@@ -450,8 +571,6 @@ class LatexTranslationService:
             prefix = working[:comment_index].rstrip()
             if prefix:
                 cleaned_lines.append(prefix + newline)
-            elif newline:
-                cleaned_lines.append(newline)
 
         cleaned = "".join(cleaned_lines)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
@@ -465,6 +584,13 @@ class LatexTranslationService:
         return cleaned
 
     @staticmethod
+    def _protected_tokens_intact(translated: str, replacements: dict[str, str]) -> bool:
+        for token in replacements:
+            if translated.count(token) != 1:
+                return False
+        return True
+
+    @staticmethod
     def _translation_looks_usable(original: str, translated: str, is_root: bool) -> bool:
         if not translated.strip():
             return False
@@ -472,9 +598,49 @@ class LatexTranslationService:
             return False
         if BEGIN_DOCUMENT_RE.search(original) and not BEGIN_DOCUMENT_RE.search(translated):
             return False
-        if abs(translated.count("{") - translated.count("}")) > 6:
+        if translated.count("{") - translated.count("}") != original.count("{") - original.count("}"):
+            return False
+        original_leading = LEADING_COMMAND_RE.match(original)
+        translated_leading = LEADING_COMMAND_RE.match(translated)
+        if original_leading:
+            if not translated_leading:
+                return False
+            if original_leading.group(1) != translated_leading.group(1):
+                return False
+        original_section_counts = LatexTranslationService._count_section_commands(original)
+        translated_section_counts = LatexTranslationService._count_section_commands(translated)
+        for command, count in original_section_counts.items():
+            if translated_section_counts.get(command, 0) < count:
+                return False
+        original_env_counts = LatexTranslationService._count_begin_environments(original)
+        translated_env_counts = LatexTranslationService._count_begin_environments(translated)
+        for env_name, count in original_env_counts.items():
+            if translated_env_counts.get(env_name, 0) < count:
+                return False
+        if translated.count("\\item") < original.count("\\item"):
+            return False
+        if len(original) >= 800 and len(translated) < max(320, int(len(original) * 0.36)):
+            return False
+        if len(translated) > max(int(len(original) * 1.8), len(original) + 2400):
             return False
         return True
+
+    @staticmethod
+    def _count_section_commands(source_text: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for command in SECTION_COMMANDS:
+            pattern = re.compile(rf"\\{command}\*?(?:\[[^\]]*\])?{{")
+            count = len(pattern.findall(source_text))
+            if count:
+                counts[command] = count
+        return counts
+
+    @staticmethod
+    def _count_begin_environments(source_text: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for env_name in BEGIN_ENV_RE.findall(source_text):
+            counts[env_name] = counts.get(env_name, 0) + 1
+        return counts
 
     @staticmethod
     def _looks_like_bibliography_file(tex_path: Path, content: str) -> bool:
@@ -508,7 +674,7 @@ class LatexTranslationService:
         for tex_path in tex_files:
             original = tex_path.read_text(encoding="utf-8", errors="ignore")
             sanitized, removed_packages = self._strip_disabled_packages(original, disabled_packages)
-            sanitized, cjk_fix_count = self._sanitize_conflicting_cjk_commands(sanitized, removed_packages)
+            sanitized, cjk_fix_count = self._sanitize_conflicting_cjk_commands(sanitized, disabled_packages)
             sanitized, inline_fix_count = self._sanitize_inline_section_commands(sanitized)
             sanitized, table_fix_count = self._sanitize_table_section_commands(sanitized)
             if removed_packages:
@@ -623,9 +789,6 @@ class LatexTranslationService:
         )
 
         for line in source_text.splitlines(keepends=True):
-            if "&" not in line:
-                sanitized_lines.append(line)
-                continue
             updated, count = pattern.subn(r"\g<prefix>", line)
             fixes += count
             sanitized_lines.append(updated)
@@ -633,15 +796,14 @@ class LatexTranslationService:
         return "".join(sanitized_lines), fixes
 
     @staticmethod
-    def _sanitize_conflicting_cjk_commands(source_text: str, removed_packages: list[str]) -> tuple[str, int]:
-        if not set(removed_packages).intersection(CONFLICTING_CJK_PACKAGES):
+    def _sanitize_conflicting_cjk_commands(source_text: str, disabled_packages: set[str]) -> tuple[str, int]:
+        if not disabled_packages.intersection(CONFLICTING_CJK_PACKAGES):
             return source_text, 0
 
         patterns = (
-            r"\\begin{CJK(?:\*)?}{[^{}]*}{[^{}]*}",
-            r"\\end{CJK(?:\*)?}",
-            r"\\begin{CJK\*?}{[^{}]*}{[^{}]*}",
-            r"\\CJKfamily{[^{}]*}",
+            r"\\begin\{CJK\*?\}\{[^{}]*\}\{[^{}]*\}",
+            r"\\end\{CJK\*?\}",
+            r"\\CJKfamily\{[^{}]*\}",
         )
         updated = source_text
         fixes = 0

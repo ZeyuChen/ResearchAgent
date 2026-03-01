@@ -8,6 +8,7 @@ const state = {
   activeJobStartedAt: 0,
   activeTranslationJobId: null,
   activeTranslationJobStartedAt: 0,
+  lastPdfViewerUrl: "",
   ingestSuggestions: [],
   flomoDraft: null,
   selectionDraft: null,
@@ -666,13 +667,24 @@ function renderPdfPane(article) {
   if (!activePdfUrl) {
     nodes.pdfViewer.classList.add("hidden");
     nodes.pdfEmpty.classList.remove("hidden");
+    state.lastPdfViewerUrl = "";
+    nodes.pdfViewer.src = "about:blank";
     nodes.pdfCaption.textContent = "当前文章没有可用的 PDF 原文。";
     return;
   }
 
   nodes.pdfViewer.classList.remove("hidden");
   nodes.pdfEmpty.classList.add("hidden");
-  nodes.pdfViewer.src = buildPdfViewerUrl(activePdfUrl, 1);
+  const viewerUrl = buildPdfViewerUrl(activePdfUrl, 1);
+  if (state.lastPdfViewerUrl !== viewerUrl) {
+    state.lastPdfViewerUrl = viewerUrl;
+    nodes.pdfViewer.src = "about:blank";
+    window.setTimeout(() => {
+      if (state.lastPdfViewerUrl === viewerUrl) {
+        nodes.pdfViewer.src = viewerUrl;
+      }
+    }, 20);
+  }
   nodes.pdfCaption.textContent = state.pdfVariant === "translated" && translatedPdfUrl
     ? "当前预览的是全文中译 PDF。页码跳转仍以原文页码为参考，可能略有偏移。"
     : "正文中的页码标记可直接跳转到原始 PDF。";
@@ -748,9 +760,12 @@ function renderTranslationStatus(translation) {
 
 function openPdfAt(pdfUrl, page) {
   const targetUrl = buildPdfViewerUrl(pdfUrl, page);
+  state.lastPdfViewerUrl = targetUrl;
   nodes.pdfViewer.src = "about:blank";
   window.setTimeout(() => {
-    nodes.pdfViewer.src = targetUrl;
+    if (state.lastPdfViewerUrl === targetUrl) {
+      nodes.pdfViewer.src = targetUrl;
+    }
   }, 20);
   if (window.innerWidth < 1180) {
     nodes.pdfPane.scrollIntoView({ behavior: "smooth", block: "start" });
