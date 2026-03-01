@@ -973,6 +973,12 @@ select {
   gap: 10px;
 }
 
+.chat-shortcut-hint {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
 .chat-composer textarea {
   width: 100%;
   min-height: 108px;
