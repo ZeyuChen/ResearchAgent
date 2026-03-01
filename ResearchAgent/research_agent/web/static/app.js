@@ -21,8 +21,15 @@ const state = {
   chatForceNewSession: false,
 };
 
+const SIDEBAR_WIDTH_STORAGE_KEY = "research-agent-sidebar-width";
+const DEFAULT_SIDEBAR_WIDTH = 360;
+const MIN_SIDEBAR_WIDTH = 300;
+const MAX_SIDEBAR_WIDTH = 720;
+
 const nodes = {
   appShell: document.getElementById("appShell"),
+  layout: document.querySelector(".layout"),
+  layoutDivider: document.getElementById("layoutDivider"),
   sidebarToggle: document.getElementById("sidebarToggle"),
   openIngestModal: document.getElementById("openIngestModal"),
   librarySidebar: document.getElementById("librarySidebar"),
@@ -79,6 +86,7 @@ const nodes = {
 };
 
 async function bootstrap() {
+  loadSidebarWidthPreference();
   await Promise.all([refreshLibrary(), refreshChatOptions()]);
   await loadPersistedChatSession();
   renderWorkspace();
@@ -982,6 +990,61 @@ function bindIngestModalInteractions() {
   });
 }
 
+function bindLayoutResizeInteractions() {
+  if (!nodes.layout || !nodes.layoutDivider) {
+    return;
+  }
+
+  let dragging = false;
+  let activePointerId = null;
+
+  const finishDrag = () => {
+    if (!dragging) {
+      return;
+    }
+    dragging = false;
+    activePointerId = null;
+    document.body.classList.remove("layout-resizing");
+    nodes.appShell.classList.remove("resizing");
+    applySidebarWidth(getCurrentSidebarWidth(), true);
+  };
+
+  nodes.layoutDivider.addEventListener("pointerdown", (event) => {
+    if (state.sidebarCollapsed || window.innerWidth <= 960) {
+      return;
+    }
+    dragging = true;
+    activePointerId = event.pointerId;
+    nodes.layoutDivider.setPointerCapture(event.pointerId);
+    document.body.classList.add("layout-resizing");
+    nodes.appShell.classList.add("resizing");
+    event.preventDefault();
+  });
+
+  nodes.layoutDivider.addEventListener("pointermove", (event) => {
+    if (!dragging) {
+      return;
+    }
+    const layoutRect = nodes.layout.getBoundingClientRect();
+    const nextWidth = event.clientX - layoutRect.left;
+    applySidebarWidth(nextWidth);
+  });
+
+  const releasePointer = () => {
+    if (activePointerId !== null && nodes.layoutDivider.hasPointerCapture(activePointerId)) {
+      nodes.layoutDivider.releasePointerCapture(activePointerId);
+    }
+    finishDrag();
+  };
+
+  nodes.layoutDivider.addEventListener("pointerup", releasePointer);
+  nodes.layoutDivider.addEventListener("pointercancel", releasePointer);
+
+  window.addEventListener("resize", () => {
+    applySidebarWidth(getCurrentSidebarWidth(), true);
+  });
+}
+
 function compactTokens(value) {
   const numeric = Number(value || 0);
   if (!numeric) {
@@ -1013,6 +1076,34 @@ function formatNumber(value) {
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function clampSidebarWidth(width) {
+  const maxFromViewport = Math.max(MIN_SIDEBAR_WIDTH, Math.floor(window.innerWidth * 0.62));
+  const ceiling = Math.min(MAX_SIDEBAR_WIDTH, maxFromViewport);
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(width, ceiling));
+}
+
+function getCurrentSidebarWidth() {
+  const raw = getComputedStyle(nodes.appShell).getPropertyValue("--sidebar-width").trim();
+  const numeric = Number.parseFloat(raw);
+  return Number.isFinite(numeric) ? numeric : DEFAULT_SIDEBAR_WIDTH;
+}
+
+function applySidebarWidth(width, persist = false) {
+  if (!nodes.appShell) {
+    return;
+  }
+  const nextWidth = clampSidebarWidth(Number(width) || DEFAULT_SIDEBAR_WIDTH);
+  nodes.appShell.style.setProperty("--sidebar-width", `${nextWidth}px`);
+  if (persist) {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth));
+  }
+}
+
+function loadSidebarWidthPreference() {
+  const stored = Number.parseFloat(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || "");
+  applySidebarWidth(Number.isFinite(stored) ? stored : DEFAULT_SIDEBAR_WIDTH);
 }
 
 function escapeHtml(value) {
@@ -1101,6 +1192,7 @@ nodes.chatInput.addEventListener("keydown", async (event) => {
 bindUploadInteractions();
 bindLightboxInteractions();
 bindIngestModalInteractions();
+bindLayoutResizeInteractions();
 applyViewMode();
 
 bootstrap().catch((error) => {
