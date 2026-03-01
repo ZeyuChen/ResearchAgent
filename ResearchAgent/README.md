@@ -2,6 +2,8 @@
 
 ResearchAgent is a local-first RL / LLM infrastructure research workstation.
 
+![ResearchAgent UI](docs/assets/researchagent-home.png)
+
 It is built for people who do not just want to "summarize a PDF", but want a durable workflow:
 
 - collect papers and technical blogs
@@ -200,6 +202,8 @@ venv/bin/python -m pytest ResearchAgent/tests
 ```
 
 See [docs/development.md](docs/development.md) for a fuller contributor workflow.
+
+Repository-level contribution rules are in [../CONTRIBUTING.md](../CONTRIBUTING.md), and the project is released under the [MIT License](../LICENSE).
 
 ## Current Scope (v0.1)
 

@@ -8,6 +8,8 @@ It automates three things that usually stay fragmented:
 - turning raw sources into expert-grade Chinese analysis with Gemini
 - organizing everything into a searchable local knowledge base with a dual-pane reader and chat workspace
 
+![ResearchAgent UI](ResearchAgent/docs/assets/researchagent-home.png)
+
 The production code lives in [ResearchAgent/README.md](ResearchAgent/README.md).
 
 ## Why This Exists
@@ -49,6 +51,8 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 - System architecture: [ResearchAgent/docs/architecture.md](ResearchAgent/docs/architecture.md)
 - Development guide: [ResearchAgent/docs/development.md](ResearchAgent/docs/development.md)
 - Competitive roadmap: [ResearchAgent/docs/scholaread-benchmark-roadmap.md](ResearchAgent/docs/scholaread-benchmark-roadmap.md)
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- License: [LICENSE](LICENSE)
 
 ## Repository Layout
 
