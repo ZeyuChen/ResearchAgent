@@ -22,6 +22,9 @@ const state = {
   chatCache: null,
   pendingChatPlaceholder: null,
   chatForceNewSession: false,
+  chatAbortController: null,
+  chatPendingSnapshot: null,
+  activeChatRequestId: null,
   tagDraft: [],
 };
 
@@ -601,6 +604,7 @@ function renderVisualGallery(article) {
 
 function renderChatSidebar() {
   renderChatArticleOptions();
+  renderChatModelOptions();
   updateChatContextHint();
 }
 
@@ -642,17 +646,38 @@ function renderChatView() {
   const currentArticle = getChatArticle();
   nodes.chatComposer.classList.toggle("disabled", !currentArticle || !state.chatOptions.available);
   nodes.chatInput.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
-  nodes.chatSendButton.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
+  nodes.chatSendButton.disabled = !currentArticle || !state.chatOptions.available;
+  if (nodes.chatModelSelect) {
+    nodes.chatModelSelect.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
+  }
+  updateChatSendButtonState();
 
   if (!state.chatOptions.available) {
     nodes.chatStatus.textContent = "Gemini API 尚未配置";
   } else if (state.chatPending) {
-    nodes.chatStatus.textContent = "Gemini 正在回答，首次会准备上下文缓存";
+    nodes.chatStatus.textContent = "正在生成，点击停止可中断本轮请求";
   } else {
     nodes.chatStatus.textContent = currentArticle ? "就绪" : "请选择一篇论文";
   }
 
   renderChatMessages();
+}
+
+function updateChatSendButtonState() {
+  if (!nodes.chatSendButton) {
+    return;
+  }
+  nodes.chatSendButton.classList.toggle("is-pending", state.chatPending);
+  nodes.chatSendButton.setAttribute("aria-label", state.chatPending ? "停止" : "发送");
+  nodes.chatSendButton.title = state.chatPending ? "停止生成" : "发送";
+  const sendIcon = nodes.chatSendButton.querySelector(".icon-send");
+  const stopIcon = nodes.chatSendButton.querySelector(".icon-stop");
+  if (sendIcon) {
+    sendIcon.classList.toggle("hidden", state.chatPending);
+  }
+  if (stopIcon) {
+    stopIcon.classList.toggle("hidden", !state.chatPending);
+  }
 }
 
 function renderChatMessages() {
@@ -792,6 +817,27 @@ function resetChatSession() {
   state.chatForceNewSession = false;
 }
 
+function stopPendingChat() {
+  if (state.chatAbortController) {
+    state.chatAbortController.abort();
+  }
+  const snapshot = state.chatPendingSnapshot;
+  if (snapshot) {
+    state.chatMessages = snapshot.messages;
+    state.chatSessionId = snapshot.sessionId;
+    state.chatCache = snapshot.cache;
+    state.chatForceNewSession = snapshot.forceNewSession;
+    nodes.chatInput.value = snapshot.draft;
+  }
+  state.chatPending = false;
+  state.pendingChatPlaceholder = null;
+  state.chatAbortController = null;
+  state.chatPendingSnapshot = null;
+  state.activeChatRequestId = null;
+  nodes.chatStatus.textContent = "已停止生成";
+  renderChatView();
+}
+
 function startFreshChatSession() {
   resetChatSession();
   state.chatForceNewSession = true;
@@ -838,16 +884,28 @@ async function sendChatMessage() {
     return;
   }
 
+  const previousMessages = [...state.chatMessages];
   const previousSessionId = state.chatSessionId;
   const previousCache = state.chatCache;
   const previousForceNewSession = state.chatForceNewSession;
   const draft = message;
+  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const abortController = new AbortController();
   const userMessage = {
     role: "user",
     text: draft,
     created_at: new Date().toISOString(),
   };
   state.chatPending = true;
+  state.chatAbortController = abortController;
+  state.activeChatRequestId = requestId;
+  state.chatPendingSnapshot = {
+    messages: previousMessages,
+    sessionId: previousSessionId,
+    cache: previousCache,
+    forceNewSession: previousForceNewSession,
+    draft,
+  };
   state.pendingChatPlaceholder = {
     role: "assistant",
     pending: true,
@@ -863,6 +921,7 @@ async function sendChatMessage() {
     const response = await fetch("/api/chat/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: abortController.signal,
       body: JSON.stringify({
         article_id: article.article_id,
         message: draft,
@@ -871,6 +930,9 @@ async function sendChatMessage() {
         new_session: state.chatForceNewSession,
       }),
     });
+    if (state.activeChatRequestId !== requestId) {
+      return;
+    }
     const payload = await readJsonPayload(response);
     if (!response.ok) {
       throw new Error(payload.detail || "聊天请求失败");
@@ -880,12 +942,21 @@ async function sendChatMessage() {
     state.chatCache = payload.cache || null;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = false;
+    state.chatPendingSnapshot = null;
+    state.chatAbortController = null;
+    state.activeChatRequestId = null;
   } catch (error) {
+    if (isAbortError(error) || state.activeChatRequestId !== requestId) {
+      return;
+    }
     state.chatMessages = previousMessages;
     state.chatSessionId = previousSessionId;
     state.chatCache = previousCache;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = previousForceNewSession;
+    state.chatPendingSnapshot = null;
+    state.chatAbortController = null;
+    state.activeChatRequestId = null;
     state.chatMessages = [
       ...state.chatMessages,
       {
@@ -896,8 +967,15 @@ async function sendChatMessage() {
       },
     ];
   } finally {
-    state.chatPending = false;
-    renderChatView();
+    if (state.activeChatRequestId === requestId) {
+      state.chatPending = false;
+      state.chatAbortController = null;
+      state.chatPendingSnapshot = null;
+      state.activeChatRequestId = null;
+      renderChatView();
+    } else if (!state.chatPending) {
+      renderChatView();
+    }
   }
 }
 
@@ -923,6 +1001,16 @@ function buildChatFailureMessage(error, modelKey) {
     return raw;
   }
   return `${modelLabel} 暂时没有返回结果，请稍后重试，或先切换到 Flash。`;
+}
+
+function isAbortError(error) {
+  return Boolean(
+    error
+    && (
+      error.name === "AbortError"
+      || String(error.message || "").toLowerCase().includes("aborted")
+    )
+  );
 }
 
 async function startUrlIngest() {
@@ -1856,14 +1944,16 @@ nodes.viewToggle.addEventListener("click", (event) => {
   setViewMode(button.dataset.mode);
 });
 
-nodes.chatArticleSelect.addEventListener("change", (event) => {
-  const nextArticleId = event.target.value;
-  state.chatArticleId = nextArticleId;
-  resetChatSession();
-  void loadArticle(nextArticleId, "chat");
-  renderChatSidebar();
-  renderChatView();
-});
+if (nodes.chatArticleSelect) {
+  nodes.chatArticleSelect.addEventListener("change", (event) => {
+    const nextArticleId = event.target.value;
+    state.chatArticleId = nextArticleId;
+    resetChatSession();
+    void loadArticle(nextArticleId, "chat");
+    renderChatSidebar();
+    renderChatView();
+  });
+}
 
 if (nodes.chatModelSelect) {
   nodes.chatModelSelect.addEventListener("change", (event) => {
@@ -1883,6 +1973,7 @@ nodes.chatResetButton.addEventListener("click", () => {
 nodes.chatComposer.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.chatPending) {
+    stopPendingChat();
     return;
   }
   await sendChatMessage();
