@@ -67,6 +67,8 @@ class StorageManager:
         for metadata_path in self.data_dir.glob("*/*/metadata.json"):
             metadata = self._read_metadata(metadata_path)
             metadata.setdefault("topic_tags", [])
+            metadata.setdefault("imported_at", metadata.get("created_at", ""))
+            metadata.setdefault("last_read_at", "")
             article_path = metadata_path.parent / "article.md"
             metadata["has_article"] = article_path.exists()
             metadata["article_excerpt"] = ""
@@ -74,7 +76,13 @@ class StorageManager:
                 excerpt = article_path.read_text(encoding="utf-8")[:260]
                 metadata["article_excerpt"] = excerpt.strip()
             items.append(metadata)
-        items.sort(key=lambda row: row.get("published_at", ""), reverse=True)
+        items.sort(
+            key=lambda row: (
+                row.get("last_read_at", "") or "",
+                row.get("imported_at", "") or row.get("created_at", "") or "",
+            ),
+            reverse=True,
+        )
         return items
 
     def load_article(self, article_id: str) -> dict | None:
@@ -83,6 +91,21 @@ class StorageManager:
             if metadata.get("article_id") != article_id:
                 continue
             metadata.setdefault("topic_tags", [])
+            metadata.setdefault("imported_at", metadata.get("created_at", ""))
+            metadata.setdefault("last_read_at", "")
+            article_path = metadata_path.parent / "article.md"
+            metadata["markdown"] = article_path.read_text(encoding="utf-8") if article_path.exists() else ""
+            return metadata
+        return None
+
+    def touch_article_read(self, article_id: str) -> dict | None:
+        for metadata_path in self.data_dir.glob("*/*/metadata.json"):
+            metadata = self._read_metadata(metadata_path)
+            if metadata.get("article_id") != article_id:
+                continue
+            metadata.setdefault("imported_at", metadata.get("created_at", ""))
+            metadata["last_read_at"] = datetime.now().isoformat(timespec="seconds")
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
             article_path = metadata_path.parent / "article.md"
             metadata["markdown"] = article_path.read_text(encoding="utf-8") if article_path.exists() else ""
             return metadata
@@ -94,6 +117,8 @@ class StorageManager:
             metadata = self._read_metadata(metadata_path)
             if metadata.get("article_id") != article_id:
                 continue
+            metadata.setdefault("imported_at", metadata.get("created_at", ""))
+            metadata.setdefault("last_read_at", "")
             metadata["topic_tags"] = normalized
             metadata["updated_at"] = datetime.now().isoformat(timespec="seconds")
             metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -131,6 +156,8 @@ class StorageManager:
             "meta": item.meta,
             "source_files": relative_source_files,
             "created_at": datetime.now().isoformat(timespec="seconds"),
+            "imported_at": datetime.now().isoformat(timespec="seconds"),
+            "last_read_at": "",
         }
 
     @staticmethod

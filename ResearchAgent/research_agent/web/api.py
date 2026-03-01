@@ -310,7 +310,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/articles/{article_id}")
     async def article_detail(article_id: str) -> dict:
-        article = storage_manager.load_article(article_id)
+        article = storage_manager.touch_article_read(article_id)
         if not article:
             raise HTTPException(status_code=404, detail="Article not found")
         return build_article_payload(article)

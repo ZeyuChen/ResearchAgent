@@ -134,6 +134,7 @@ async function refreshLibrary() {
   const response = await fetch("/api/library");
   const payload = await response.json();
   state.library = payload.articles || [];
+  sortLibraryInPlace();
   state.topics = payload.topics || [];
   if (!state.chatArticleId && state.library.length) {
     state.chatArticleId = state.activeArticleId || state.library[0].article_id;
@@ -351,12 +352,14 @@ function renderArticleList() {
     const arxivId = getArticleArxivId(article);
     const isWebOnly = isHtmlOnlyArticle(article);
     const tagsMarkup = buildTagMarkup(article.display_tags || [], 3);
+    const timeMarkup = buildLibraryTimeMarkup(article);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
       ${isWebOnly ? "" : `<div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>`}
       ${tagsMarkup ? `<div class="card-tags">${tagsMarkup}</div>` : ""}
       <div class="card-path">${escapeHtml(pathLabel)}</div>
       ${arxivId ? `<div class="card-arxiv-id">arXiv ${escapeHtml(arxivId)}</div>` : ""}
+      ${timeMarkup}
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>
         <span>${compactUsd(usage.estimated_cost_usd || 0)}</span>
@@ -388,12 +391,14 @@ function renderLibraryBrowser() {
     const pathLabel = buildArticleFolderPath(article);
     const arxivId = getArticleArxivId(article);
     const tags = buildTagMarkup(article.display_tags || [], 4);
+    const timeMarkup = buildLibraryTimeMarkup(article, true);
     button.innerHTML = `
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
       ${isWebOnly ? "" : `<div class="library-browser-summary">${escapeHtml(article.summary || "")}</div>`}
       <div class="library-browser-path">${escapeHtml(pathLabel)}</div>
       ${arxivId ? `<div class="library-browser-arxiv">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
+      ${timeMarkup}
       <div class="library-browser-footer">
         <span>${compactTokens(usage.total_tokens || 0)} · ${compactUsd(usage.estimated_cost_usd || 0)}</span>
         <span>进入阅读</span>
@@ -402,6 +407,29 @@ function renderLibraryBrowser() {
     button.addEventListener("click", () => loadArticle(article.article_id, "reader"));
     nodes.libraryGrid.appendChild(button);
   });
+}
+
+function sortLibraryInPlace() {
+  state.library.sort((left, right) => {
+    const leftPrimary = String(left.last_read_at || "").trim();
+    const rightPrimary = String(right.last_read_at || "").trim();
+    if (leftPrimary !== rightPrimary) {
+      return rightPrimary.localeCompare(leftPrimary);
+    }
+    const leftSecondary = String(left.imported_at || left.created_at || "").trim();
+    const rightSecondary = String(right.imported_at || right.created_at || "").trim();
+    return rightSecondary.localeCompare(leftSecondary);
+  });
+}
+
+function mergeArticleIntoLibrary(article) {
+  const index = state.library.findIndex((entry) => entry.article_id === article.article_id);
+  if (index >= 0) {
+    state.library[index] = { ...state.library[index], ...article };
+  } else {
+    state.library.push(article);
+  }
+  sortLibraryInPlace();
 }
 
 function getFilteredArticles() {
@@ -471,6 +499,30 @@ function getArticleArxivId(article) {
   return "";
 }
 
+function buildLibraryTimeMarkup(article, expanded = false) {
+  const imported = formatLibraryTime(article.imported_at || article.created_at || "");
+  const lastRead = formatLibraryTime(article.last_read_at || "");
+  const parts = [];
+  if (imported) {
+    parts.push(`导入 ${escapeHtml(imported)}`);
+  }
+  if (lastRead) {
+    parts.push(`最近阅读 ${escapeHtml(lastRead)}`);
+  }
+  if (!parts.length) {
+    return "";
+  }
+  return `<div class="${expanded ? "library-time-meta" : "card-time-meta"}">${parts.join(" · ")}</div>`;
+}
+
+function formatLibraryTime(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  return text.slice(0, 16).replace("T", " ");
+}
+
 function buildTagMarkup(tags, limit = 4) {
   return (tags || []).slice(0, limit)
     .map((tag) => `<span class="card-tag">#${escapeHtml(tag)}</span>`)
@@ -491,6 +543,10 @@ async function loadArticle(articleId, nextWorkspace = "reader") {
     return;
   }
   const article = await response.json();
+  mergeArticleIntoLibrary(article);
+  renderArticleList();
+  renderLibraryBrowser();
+  renderChatSidebar();
   state.workspace = nextWorkspace;
   renderArticle(article);
   renderWorkspace();
