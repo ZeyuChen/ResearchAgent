@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui3" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui4" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -18,26 +18,19 @@
         <div class="app-bar-left">
           <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧边栏">☰</button>
           <div class="brand-mark"></div>
-          <div>
-            <div class="app-kicker">Research Workspace</div>
-            <h1>ResearchAgent</h1>
-          </div>
+          <h1>ResearchAgent</h1>
         </div>
-        <div class="app-bar-right">Local paper reader for arXiv, PDFs, and web notes</div>
       </header>
 
       <div class="layout">
         <aside id="sidebar" class="sidebar">
           <section class="panel">
+            <button id="openIngestModal" class="primary-button new-source-button" type="button">新增资料</button>
+
             <label class="field-stack">
               <span>搜索</span>
               <input id="searchInput" type="search" placeholder="搜索标题、摘要、关键词" />
             </label>
-
-            <div class="filter-block">
-              <div class="block-title">日期归档</div>
-              <div id="dateFilters" class="chip-list"></div>
-            </div>
 
             <div class="filter-block">
               <div class="block-title">主题标签</div>
@@ -55,44 +48,8 @@
         </aside>
 
         <main class="main-stage">
-          <section class="panel intake-panel">
-            <div class="intake-copy">
-              <div class="section-kicker">Add Source</div>
-              <h2>Bring in the next paper</h2>
-              <p>ArXiv, PDFs, and technical posts.</p>
-            </div>
-
-            <div class="intake-actions">
-              <label class="field-stack">
-                <span>Link</span>
-                <div class="url-row">
-                  <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... or https://..." />
-                  <button id="ingestUrlButton" class="primary-button" type="button">导入</button>
-                </div>
-              </label>
-
-              <div id="uploadDropzone" class="dropzone" tabindex="0" role="button">
-                <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
-                <div class="drop-kicker">PDF Upload</div>
-                <div class="drop-title">拖入 PDF，或点击选择</div>
-                <div class="drop-hint">Auto archive and analysis.</div>
-              </div>
-            </div>
-
-            <div id="ingestStatus" class="status-banner hidden"></div>
-            <div id="progressShell" class="progress-shell hidden">
-              <div class="progress-row">
-                <span id="progressLabel">准备中</span>
-                <span id="progressPercent">0%</span>
-              </div>
-              <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
-              <div id="progressHint" class="progress-hint"></div>
-            </div>
-          </section>
-
           <section class="hero-bar">
             <div>
-              <div class="section-kicker">Reader Mode</div>
               <h2 id="heroTitle">选择左侧论文开始阅读</h2>
             </div>
             <div class="hero-side">
@@ -114,7 +71,7 @@
             <section class="panel analysis-panel">
               <div class="analysis-topbar compact">
                 <div class="analysis-actions">
-                  <a id="sourceLink" class="secondary-button hidden" target="_blank" rel="noreferrer">查看原始来源</a>
+                  <a id="sourceLink" class="subtle-link hidden" target="_blank" rel="noreferrer">查看原始来源</a>
                   <div id="fileActions" class="inline-actions"></div>
                 </div>
                 <div id="usageInline" class="usage-inline"></div>
@@ -124,17 +81,6 @@
                 <div class="mini-title">摘要</div>
                 <p id="summaryText"></p>
               </div>
-
-              <section class="reader-tools">
-                <div class="tool-group">
-                  <div class="mini-title">解析索引</div>
-                  <div id="headingIndex" class="heading-index"></div>
-                </div>
-                <div class="tool-group">
-                  <div class="mini-title">原文页码跳转</div>
-                  <div id="pdfPageRefs" class="page-ref-list"></div>
-                </div>
-              </section>
 
               <section id="previewStrip" class="inline-panel preview-strip hidden">
                 <div id="previewTitle" class="mini-title">重点图表 / 表格页</div>
@@ -170,6 +116,45 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui3"></script>
+    <div id="ingestModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ingestModalTitle">
+      <div class="modal-backdrop" data-close-ingest="true"></div>
+      <section class="modal-panel">
+        <div class="modal-head">
+          <div>
+            <div class="block-title">新增资料</div>
+            <h3 id="ingestModalTitle">导入新论文或网页</h3>
+          </div>
+          <button id="closeIngestModal" class="icon-button" type="button" aria-label="关闭导入窗口">×</button>
+        </div>
+
+        <div class="intake-actions">
+          <label class="field-stack">
+            <span>Link</span>
+            <div class="url-row">
+              <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... or https://..." />
+              <button id="ingestUrlButton" class="primary-button" type="button">导入</button>
+            </div>
+          </label>
+
+          <div id="uploadDropzone" class="dropzone" tabindex="0" role="button">
+            <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
+            <div class="drop-kicker">PDF Upload</div>
+            <div class="drop-title">拖入 PDF，或点击选择</div>
+          </div>
+        </div>
+
+        <div id="ingestStatus" class="status-banner hidden"></div>
+        <div id="progressShell" class="progress-shell hidden">
+          <div class="progress-row">
+            <span id="progressLabel">准备中</span>
+            <span id="progressPercent">0%</span>
+          </div>
+          <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+          <div id="progressHint" class="progress-hint"></div>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/app.js?v=20260301-ui4"></script>
   </body>
 </html>

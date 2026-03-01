@@ -1,9 +1,7 @@
 const state = {
   library: [],
-  dates: [],
   topics: [],
   activeArticleId: null,
-  selectedDate: "all",
   selectedTopic: "all",
   search: "",
   activeJobId: null,
@@ -16,9 +14,9 @@ const state = {
 const nodes = {
   appShell: document.getElementById("appShell"),
   sidebarToggle: document.getElementById("sidebarToggle"),
+  openIngestModal: document.getElementById("openIngestModal"),
   articleList: document.getElementById("articleList"),
   articleCount: document.getElementById("articleCount"),
-  dateFilters: document.getElementById("dateFilters"),
   topicFilters: document.getElementById("topicFilters"),
   searchInput: document.getElementById("searchInput"),
   emptyState: document.getElementById("emptyState"),
@@ -31,8 +29,6 @@ const nodes = {
   articleBody: document.getElementById("articleBody"),
   fileActions: document.getElementById("fileActions"),
   sourceLink: document.getElementById("sourceLink"),
-  headingIndex: document.getElementById("headingIndex"),
-  pdfPageRefs: document.getElementById("pdfPageRefs"),
   previewStrip: document.getElementById("previewStrip"),
   previewTitle: document.getElementById("previewTitle"),
   pdfPreviewGallery: document.getElementById("pdfPreviewGallery"),
@@ -54,6 +50,8 @@ const nodes = {
   progressLabel: document.getElementById("progressLabel"),
   progressPercent: document.getElementById("progressPercent"),
   progressHint: document.getElementById("progressHint"),
+  ingestModal: document.getElementById("ingestModal"),
+  closeIngestModal: document.getElementById("closeIngestModal"),
 };
 
 async function bootstrap() {
@@ -64,29 +62,13 @@ async function refreshLibrary() {
   const response = await fetch("/api/library");
   const payload = await response.json();
   state.library = payload.articles || [];
-  state.dates = payload.dates || [];
   state.topics = payload.topics || [];
   renderFilters();
   renderArticleList();
 }
 
 function renderFilters() {
-  nodes.dateFilters.innerHTML = "";
   nodes.topicFilters.innerHTML = "";
-
-  nodes.dateFilters.appendChild(createChip("全部", state.selectedDate === "all", () => {
-    state.selectedDate = "all";
-    renderFilters();
-    renderArticleList();
-  }));
-
-  state.dates.forEach((dateValue) => {
-    nodes.dateFilters.appendChild(createChip(dateValue, state.selectedDate === dateValue, () => {
-      state.selectedDate = dateValue;
-      renderFilters();
-      renderArticleList();
-    }));
-  });
 
   nodes.topicFilters.appendChild(createChip("全部", state.selectedTopic === "all", () => {
     state.selectedTopic = "all";
@@ -130,13 +112,13 @@ function renderArticleList() {
     button.type = "button";
     button.className = `article-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
+    const tags = (article.display_tags || []).slice(0, 3)
+      .map((tag) => `<span class="card-tag">${escapeHtml(tag)}</span>`)
+      .join("");
     button.innerHTML = `
-      <div class="card-eyebrow">
-        <span>${escapeHtml(article.source || "unknown")}</span>
-        <span>${escapeHtml(article.archive_date || "")}</span>
-      </div>
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
       <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 160))}</div>
+      ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>
         <span>${compactUsd(usage.estimated_cost_usd || 0)}</span>
@@ -149,11 +131,10 @@ function renderArticleList() {
 
 function getFilteredArticles() {
   return state.library.filter((article) => {
-    const dateMatch = state.selectedDate === "all" || (article.archive_date || "") === state.selectedDate;
-    const topicMatch = state.selectedTopic === "all" || (article.tags || []).includes(state.selectedTopic);
+    const topicMatch = state.selectedTopic === "all" || (article.display_tags || []).includes(state.selectedTopic);
     const textBlob = `${article.title || ""} ${article.summary || ""}`.toLowerCase();
     const searchMatch = !state.search || textBlob.includes(state.search.toLowerCase());
-    return dateMatch && topicMatch && searchMatch;
+    return topicMatch && searchMatch;
   });
 }
 
@@ -189,21 +170,18 @@ function renderArticle(article) {
 
   nodes.summaryText.textContent = article.summary || "暂无摘要。";
   nodes.articleBody.innerHTML = article.rendered_html || "<p>暂无正文。</p>";
-  renderHeadingIndex();
   renderPdfPane(article);
   renderVisualGallery(article);
 }
 
 function renderMetaBadges(article) {
   nodes.metaBadges.innerHTML = "";
-  [article.source, (article.published_at || "").slice(0, 10), ...(article.tags || []).slice(0, 5)]
-    .filter(Boolean)
-    .forEach((value) => {
+  (article.display_tags || []).slice(0, 6).forEach((value) => {
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = value;
+      badge.textContent = `#${value}`;
       nodes.metaBadges.appendChild(badge);
-    });
+  });
 }
 
 function renderFileActions(article) {
@@ -215,9 +193,9 @@ function renderFileActions(article) {
   }
 
   nodes.fileActions.innerHTML = "";
-  (article.source_files || []).forEach((file) => {
+  (article.display_source_files || []).forEach((file) => {
     const link = document.createElement("a");
-    link.className = "secondary-button";
+    link.className = "subtle-link";
     link.href = file.url;
     link.target = "_blank";
     link.rel = "noreferrer";
@@ -246,33 +224,8 @@ function renderUsageInline(usage) {
   `;
 }
 
-function renderHeadingIndex() {
-  nodes.headingIndex.innerHTML = "";
-  const headings = [...nodes.articleBody.querySelectorAll("h1, h2, h3")];
-  if (!headings.length) {
-    nodes.headingIndex.innerHTML = `<span class="index-empty">暂无索引</span>`;
-    return;
-  }
-
-  headings.forEach((heading, index) => {
-    const id = heading.id || `section-${index}`;
-    heading.id = id;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "index-link";
-    button.textContent = heading.textContent || "Untitled";
-    button.addEventListener("click", () => {
-      heading.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-    nodes.headingIndex.appendChild(button);
-  });
-}
-
 function renderPdfPane(article) {
   const pdfUrl = article.pdf_source_url || "";
-  const pageRefs = article.pdf_page_refs || [];
-
-  nodes.pdfPageRefs.innerHTML = "";
   if (!pdfUrl) {
     nodes.pdfViewer.classList.add("hidden");
     nodes.pdfEmpty.classList.remove("hidden");
@@ -283,25 +236,7 @@ function renderPdfPane(article) {
   nodes.pdfViewer.classList.remove("hidden");
   nodes.pdfEmpty.classList.add("hidden");
   nodes.pdfViewer.src = buildPdfViewerUrl(pdfUrl, 1);
-  nodes.pdfCaption.textContent = pageRefs.length
-    ? "点击下方页码可直接跳转原始 PDF 对应位置。"
-    : "当前解析暂未产出页码引用，可直接在右侧原文中对照阅读。";
-
-  if (!pageRefs.length) {
-    const empty = document.createElement("span");
-    empty.className = "index-empty";
-    empty.textContent = "暂无页码引用";
-    nodes.pdfPageRefs.appendChild(empty);
-  } else {
-    pageRefs.forEach((page) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "page-ref";
-      button.textContent = `P${page}`;
-      button.addEventListener("click", () => openPdfAt(pdfUrl, page));
-      nodes.pdfPageRefs.appendChild(button);
-    });
-  }
+  nodes.pdfCaption.textContent = "正文中的页码标记可直接跳转到原始 PDF。";
 
   nodes.articleBody.querySelectorAll("a.pdf-page-ref").forEach((anchor) => {
     anchor.addEventListener("click", (event) => {
@@ -391,6 +326,7 @@ async function startUrlIngest() {
     }
     nodes.ingestUrlInput.value = "";
     await pollJob(payload.job_id);
+    closeIngestModal();
   } catch (error) {
     setIntakeBusy(false);
     showStatus(error.message || "链接导入失败。", "error");
@@ -447,6 +383,7 @@ async function handlePdfIngest(file) {
     const payload = await uploadPdf(file);
     await pollJob(payload.job_id);
     nodes.pdfUploadInput.value = "";
+    closeIngestModal();
   } catch (error) {
     setIntakeBusy(false);
     showStatus(error.message || "PDF 导入失败。", "error");
@@ -499,18 +436,39 @@ function setIntakeBusy(isBusy) {
   nodes.uploadDropzone.classList.toggle("disabled", isBusy);
 }
 
+function openIngestModal() {
+  nodes.ingestModal.classList.remove("hidden");
+  syncOverlayState();
+  nodes.ingestUrlInput.focus();
+}
+
+function closeIngestModal() {
+  nodes.ingestModal.classList.add("hidden");
+  syncOverlayState();
+  if (nodes.ingestUrlButton.disabled) {
+    return;
+  }
+  showStatus("", "");
+  nodes.progressShell.classList.add("hidden");
+}
+
 function openLightbox(imageUrl, title) {
   nodes.lightboxImage.src = imageUrl;
   nodes.lightboxImage.alt = title || "图像预览";
   nodes.lightboxTitle.textContent = title || "图像预览";
   nodes.imageLightbox.classList.remove("hidden");
-  document.body.classList.add("lightbox-open");
+  syncOverlayState();
 }
 
 function closeLightbox() {
   nodes.imageLightbox.classList.add("hidden");
   nodes.lightboxImage.src = "";
-  document.body.classList.remove("lightbox-open");
+  syncOverlayState();
+}
+
+function syncOverlayState() {
+  const hasOverlay = !nodes.imageLightbox.classList.contains("hidden") || !nodes.ingestModal.classList.contains("hidden");
+  document.body.classList.toggle("lightbox-open", hasOverlay);
 }
 
 function showStatus(message, tone) {
@@ -605,6 +563,23 @@ function bindLightboxInteractions() {
     if (event.key === "Escape" && !nodes.imageLightbox.classList.contains("hidden")) {
       closeLightbox();
     }
+    if (event.key === "Escape" && !nodes.ingestModal.classList.contains("hidden") && !nodes.ingestUrlButton.disabled) {
+      closeIngestModal();
+    }
+  });
+}
+
+function bindIngestModalInteractions() {
+  nodes.openIngestModal.addEventListener("click", openIngestModal);
+  nodes.closeIngestModal.addEventListener("click", closeIngestModal);
+  nodes.ingestModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.dataset.closeIngest === "true" && !nodes.ingestUrlButton.disabled) {
+      closeIngestModal();
+    }
   });
 }
 
@@ -672,6 +647,7 @@ nodes.viewToggle.addEventListener("click", (event) => {
 
 bindUploadInteractions();
 bindLightboxInteractions();
+bindIngestModalInteractions();
 applyViewMode();
 
 bootstrap().catch((error) => {

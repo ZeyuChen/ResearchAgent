@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -16,6 +17,7 @@ LOGGER = logging.getLogger(__name__)
 GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M = 0.50
 GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M = 3.00
 GEMINI_3_FLASH_PRICING_URL = "https://ai.google.dev/pricing"
+MAX_WEB_SUMMARY_CHARS = 300
 ProgressCallback = Callable[[int, str], None]
 
 
@@ -49,55 +51,6 @@ class LLMProcessor:
         article, _ = self.generate_article_with_metrics(stored_item)
         return article
 
-    def summarize_webpage(
-        self,
-        stored_item: StoredItem,
-        progress_callback: ProgressCallback | None = None,
-    ) -> tuple[str, dict]:
-        html_path = stored_item.source_files.get("source.html")
-        if not html_path or not html_path.exists():
-            return stored_item.item.summary, self._empty_usage()
-
-        if not self.client:
-            return self._fallback_web_summary(stored_item), self._empty_usage()
-
-        content_parts = self._build_webpage_content_parts(
-            html_path=html_path,
-            item=stored_item.item,
-            instruction=(
-                "请基于这个网页的渲染后内容、截图和图片素材，输出一个高质量摘要。"
-                "请以 JSON 返回，格式为 {\"summary\":\"...\"}，不要输出其他字段。"
-                "只输出最终摘要正文，不要解释规则，不要复述要求，不要出现“摘要：”“250字”“要求”等提示语。"
-                "摘要必须控制在 250 个中文字符以内，不要照抄网页开头，要提炼主题、关键方法、重要结果或结论，"
-                "语言克制专业，适合作为知识库列表摘要。"
-            ),
-            text_limit=24000,
-            html_limit=18000,
-            progress_callback=progress_callback,
-            upload_progress=24,
-        )
-        self._notify(progress_callback, 30, "网页内容已就绪，Gemini 正在生成精炼摘要。")
-        try:
-            response = self.client.models.generate_content(
-                model=self.settings.gemini_model,
-                contents=content_parts,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=256,
-                    response_mime_type="application/json",
-                ),
-            )
-            usage = self._extract_usage(response)
-            summary = self._normalize_web_summary(self._extract_summary_text(response.text or ""))
-            if self._looks_like_web_summary_prompt_leak(summary):
-                summary = ""
-            if not summary:
-                summary = self._fallback_web_summary(stored_item)
-            return summary, usage
-        except Exception as exc:
-            LOGGER.warning("Gemini web summary generation failed for %s: %s", stored_item.item.title, exc)
-            return self._fallback_web_summary(stored_item), self._empty_usage()
-
     def summarize_article_markdown(
         self,
         article_markdown: str,
@@ -119,7 +72,7 @@ class LLMProcessor:
                     "请把它压缩成一个适合知识库列表展示的短摘要。"
                     "请以 JSON 返回，格式为 {\"summary\":\"...\"}，不要输出其他字段。"
                     "只输出最终摘要正文，不要解释规则，不要复述要求，不要出现“摘要：”字样。"
-                    "摘要必须控制在 250 个中文字符以内，优先保留主题、关键技术点、重要结果与结论。\n\n"
+                    "摘要必须控制在 300 个中文字符以内，优先保留主题、关键技术点、重要结果与结论。\n\n"
                     f"标题：{item.title}\n"
                     f"来源：{item.source_url}\n\n"
                     f"解析正文：\n{article_markdown[:20000]}"
@@ -132,14 +85,53 @@ class LLMProcessor:
             )
             usage = self._extract_usage(response)
             summary = self._normalize_web_summary(self._extract_summary_text(response.text or ""))
-            if self._looks_like_web_summary_prompt_leak(summary):
-                summary = ""
             if not summary:
                 summary = self._fallback_article_summary(article_markdown, item)
             return summary, usage
         except Exception as exc:
             LOGGER.warning("Gemini article summary generation failed for %s: %s", item.title, exc)
             return self._fallback_article_summary(article_markdown, item), self._empty_usage()
+
+    def generate_topic_tags(
+        self,
+        seed_text: str,
+        item: ResearchItem,
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[list[str], dict]:
+        seed = " ".join(seed_text.split())
+        if not seed:
+            return [], self._empty_usage()
+
+        if not self.client:
+            return self._fallback_topic_tags(seed), self._empty_usage()
+
+        self._notify(progress_callback, 90, "Gemini 正在生成主题标签。")
+        try:
+            response = self.client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=(
+                    "请根据下面内容提炼 3 到 6 个高价值主题标签。"
+                    "标签用于后续检索和归档，请优先保留具体技术实体、方法名、模型名或研究主题。"
+                    "例如：RL、Agent、VLM、MoE、Kimi、Verl、DPO。"
+                    "请以 JSON 返回，格式为 {\"tags\":[\"RL\",\"Agent\"]}，不要输出其他内容。\n\n"
+                    f"标题：{item.title}\n"
+                    f"来源：{item.source_url}\n\n"
+                    f"内容：\n{seed[:16000]}"
+                ),
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=256,
+                    response_mime_type="application/json",
+                ),
+            )
+            usage = self._extract_usage(response)
+            tags = self._extract_topic_tags(response.text or "")
+            if not tags:
+                tags = self._fallback_topic_tags(seed)
+            return tags, usage
+        except Exception as exc:
+            LOGGER.warning("Gemini topic tag generation failed for %s: %s", item.title, exc)
+            return self._fallback_topic_tags(seed), self._empty_usage()
 
     def generate_article_with_metrics(
         self,
@@ -314,16 +306,6 @@ class LLMProcessor:
         return merged
 
     @staticmethod
-    def _fallback_web_summary(stored_item: StoredItem) -> str:
-        text_path = stored_item.source_files.get("source.txt")
-        text = ""
-        if text_path and text_path.exists():
-            text = text_path.read_text(encoding="utf-8", errors="ignore")
-        normalized = " ".join(text.split())
-        if not normalized:
-            normalized = stored_item.item.title
-        return LLMProcessor._normalize_web_summary(normalized)
-
     @staticmethod
     def _fallback_article_summary(article_markdown: str, item: ResearchItem) -> str:
         for block in article_markdown.split("\n\n"):
@@ -345,32 +327,10 @@ class LLMProcessor:
         for prefix in ("摘要：", "摘要:", "summary:", "Summary:"):
             if normalized.startswith(prefix):
                 normalized = normalized[len(prefix) :].lstrip()
-        if len(normalized) <= 250:
+        if len(normalized) <= MAX_WEB_SUMMARY_CHARS:
             return normalized
-        clipped = normalized[:250].rstrip("，。；：,.;: ")
+        clipped = normalized[:MAX_WEB_SUMMARY_CHARS].rstrip("，。；：,.;: ")
         return f"{clipped}..."
-
-    @staticmethod
-    def _looks_like_web_summary_prompt_leak(text: str) -> bool:
-        lowered = text.lower()
-        if not lowered:
-            return False
-        leak_markers = (
-            "250 chinese characters",
-            "250字",
-            "250 个中文字符",
-            "do not",
-            "don't",
-            "只输出",
-            "不要复述",
-            "requirements",
-            "要求：",
-            "here is the json",
-            "```",
-        )
-        if any(marker in lowered for marker in leak_markers):
-            return True
-        return lowered.startswith(("1)", "1.", "2)", "2.", "please ", "要求"))
 
     @staticmethod
     def _extract_summary_text(raw_text: str) -> str:
@@ -384,6 +344,9 @@ class LLMProcessor:
             if start != -1 and end > start:
                 decoded = LLMProcessor._decode_summary_payload(payload[start : end + 1])
         if decoded is None:
+            lowered = payload.lower()
+            if "json requested" in lowered or "```" in lowered or "{" in payload or "}" in payload:
+                return ""
             return payload
         if isinstance(decoded, dict):
             return str(decoded.get("summary", "")).strip()
@@ -395,6 +358,48 @@ class LLMProcessor:
             return json.loads(payload)
         except json.JSONDecodeError:
             return None
+
+    @staticmethod
+    def _extract_topic_tags(raw_text: str) -> list[str]:
+        payload = raw_text.strip()
+        if not payload:
+            return []
+        decoded = LLMProcessor._decode_summary_payload(payload)
+        if decoded is None:
+            start = payload.find("{")
+            end = payload.rfind("}")
+            if start != -1 and end > start:
+                decoded = LLMProcessor._decode_summary_payload(payload[start : end + 1])
+        if not isinstance(decoded, dict):
+            return []
+        tags = decoded.get("tags", [])
+        if not isinstance(tags, list):
+            return []
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in tags:
+            tag = str(raw_tag).strip().lstrip("#")
+            if not tag:
+                continue
+            key = tag.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(tag[:24])
+            if len(normalized) >= 6:
+                break
+        return normalized
+
+    @staticmethod
+    def _fallback_topic_tags(seed_text: str) -> list[str]:
+        candidates = ("RL", "Agent", "RLHF", "PPO", "DPO", "GRPO", "MoE", "VLM", "Kimi", "Verl", "Forge", "MiniMax")
+        lowered = seed_text.lower()
+        tags: list[str] = []
+        for candidate in candidates:
+            pattern = rf"(?<![a-z0-9]){re.escape(candidate.lower())}(?![a-z0-9])"
+            if re.search(pattern, lowered):
+                tags.append(candidate)
+        return tags[:6]
 
     def _extract_usage(self, response: types.GenerateContentResponse) -> dict:
         usage = response.usage_metadata

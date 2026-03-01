@@ -76,10 +76,13 @@ class ManualIngestService:
         stored_item = self.storage_manager.persist_item(item, {"source.pdf": payload})
         self._notify(progress_callback, 28, "PDF 已归档，准备调用 Gemini 解析。")
         article, usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
+        topic_tags, tag_usage = self.llm_processor.generate_topic_tags(article, stored_item.item, progress_callback=progress_callback)
+        usage = self.llm_processor.merge_usage(usage, tag_usage)
         self.storage_manager.write_article(stored_item, article)
         self.storage_manager.update_metadata(
             stored_item.metadata_path,
             {
+                "topic_tags": topic_tags,
                 "llm_usage": usage,
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
             },
@@ -116,10 +119,17 @@ class ManualIngestService:
         stored_item = self.storage_manager.persist_item(item, source_files)
         self._notify(progress_callback, 36, "论文已归档，准备进入 Gemini 全文阅读。")
         article, usage = self.llm_processor.generate_article_with_metrics(stored_item, progress_callback=progress_callback)
+        topic_tags, tag_usage = self.llm_processor.generate_topic_tags(
+            f"{stored_item.item.title}\n\n{stored_item.item.summary}",
+            stored_item.item,
+            progress_callback=progress_callback,
+        )
+        usage = self.llm_processor.merge_usage(usage, tag_usage)
         self.storage_manager.write_article(stored_item, article)
         self.storage_manager.update_metadata(
             stored_item.metadata_path,
             {
+                "topic_tags": topic_tags,
                 "llm_usage": usage,
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
             },
@@ -156,13 +166,19 @@ class ManualIngestService:
             stored_item.item,
             progress_callback=progress_callback,
         )
+        topic_tags, tag_usage = self.llm_processor.generate_topic_tags(
+            article,
+            stored_item.item,
+            progress_callback=progress_callback,
+        )
         stored_item.item.summary = summary
-        usage = self.llm_processor.merge_usage(article_usage, summary_usage)
+        usage = self.llm_processor.merge_usage(article_usage, summary_usage, tag_usage)
         self.storage_manager.write_article(stored_item, article)
         self.storage_manager.update_metadata(
             stored_item.metadata_path,
             {
                 "summary": summary,
+                "topic_tags": topic_tags,
                 "llm_usage": usage,
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
             },

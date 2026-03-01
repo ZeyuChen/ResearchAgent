@@ -66,6 +66,7 @@ class StorageManager:
         items: list[dict] = []
         for metadata_path in self.data_dir.glob("*/*/metadata.json"):
             metadata = self._read_metadata(metadata_path)
+            metadata.setdefault("topic_tags", [])
             article_path = metadata_path.parent / "article.md"
             metadata["has_article"] = article_path.exists()
             metadata["article_excerpt"] = ""
@@ -81,6 +82,7 @@ class StorageManager:
             metadata = self._read_metadata(metadata_path)
             if metadata.get("article_id") != article_id:
                 continue
+            metadata.setdefault("topic_tags", [])
             article_path = metadata_path.parent / "article.md"
             metadata["markdown"] = article_path.read_text(encoding="utf-8") if article_path.exists() else ""
             return metadata
@@ -111,6 +113,7 @@ class StorageManager:
             "published_at": item.published_at,
             "authors": item.authors,
             "tags": item.tags,
+            "topic_tags": [],
             "meta": item.meta,
             "source_files": relative_source_files,
             "created_at": datetime.now().isoformat(timespec="seconds"),

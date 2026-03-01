@@ -20,10 +20,19 @@ from research_agent.services.pdf_preview import PDFPreviewService
 from research_agent.services.storage_manager import StorageManager
 
 ARXIV_ID_RE = re.compile(r"(\d{4}\.\d{4,5}(?:v\d+)?)")
+VISIBLE_SOURCE_FILES = {"rendered-page.png", "source.html"}
 
 
 class URLIngestRequest(BaseModel):
     url: str
+
+
+def build_display_tags(article: dict) -> list[str]:
+    return [str(tag).strip() for tag in article.get("topic_tags", []) if str(tag).strip()][:6]
+
+
+def build_visible_source_files(source_files: list[dict]) -> list[dict]:
+    return [entry for entry in source_files if entry.get("name") in VISIBLE_SOURCE_FILES]
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -74,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
             for entry in article.get("source_files", [])
         ]
+        display_tags = build_display_tags(article)
         pdf_source = next((entry["url"] for entry in source_files if entry.get("name") == "source.pdf"), "")
         rendered_html = render_markdown(article.get("markdown", ""))
         rendered_html = inject_pdf_page_links(rendered_html, pdf_source or None)
@@ -104,6 +114,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             **article,
             "source_files": source_files,
+            "display_source_files": build_visible_source_files(source_files),
+            "display_tags": display_tags,
             "pdf_source_url": pdf_source,
             "pdf_page_refs": extract_pdf_page_refs(article.get("markdown", "")),
             "source_figure_gallery": source_gallery,
@@ -114,13 +126,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/library")
     async def library() -> dict:
         articles = storage_manager.scan_library()
-        dates = sorted({row.get("archive_date", "") for row in articles if row.get("archive_date")}, reverse=True)
         topic_counter: Counter[str] = Counter()
         for article in articles:
-            topic_counter.update(article.get("tags", []))
+            article["display_tags"] = build_display_tags(article)
+            topic_counter.update(article["display_tags"])
         return {
             "articles": articles,
-            "dates": dates,
             "topics": [{"name": topic, "count": count} for topic, count in topic_counter.most_common(24)],
         }
 

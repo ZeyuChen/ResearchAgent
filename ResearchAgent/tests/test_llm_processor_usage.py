@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
 from research_agent.config import Settings
-from research_agent.models import ResearchItem, StoredItem
+from research_agent.models import ResearchItem
 from research_agent.services.llm_processor import LLMProcessor
 
 
@@ -54,40 +54,31 @@ def test_merge_usage_combines_multiple_calls() -> None:
     assert merged["estimated_cost_usd"] == 0.00041
 
 
-def test_fallback_web_summary_truncates_to_250_chars(tmp_path) -> None:
-    source_txt = tmp_path / "source.txt"
-    source_txt.write_text("A" * 400, encoding="utf-8")
-    item = ResearchItem(
-        source="manual-web",
-        title="Example",
-        summary="",
-        source_url="https://example.com",
-        published_at="2026-03-01T00:00:00",
-        identifier="web-1",
-    )
-    stored_item = StoredItem(
-        item=item,
-        item_dir=tmp_path,
-        metadata_path=tmp_path / "metadata.json",
-        article_path=tmp_path / "article.md",
-        source_files={"source.txt": source_txt, "source.html": tmp_path / "source.html"},
-    )
+def test_normalize_web_summary_truncates_to_300_chars() -> None:
+    summary = LLMProcessor._normalize_web_summary("A" * 400)
 
-    summary = LLMProcessor._fallback_web_summary(stored_item)
-
-    assert len(summary) <= 253
+    assert len(summary) <= 303
     assert summary.endswith("...")
-
-
-def test_detects_web_summary_prompt_leak() -> None:
-    assert LLMProcessor._looks_like_web_summary_prompt_leak("250 Chinese characters. 2) Don't copy the opening.")
-    assert not LLMProcessor._looks_like_web_summary_prompt_leak("Forge 面向大规模 Agent 强化学习，核心在于框架与算法协同。")
 
 
 def test_extract_summary_text_reads_json_payload() -> None:
     assert LLMProcessor._extract_summary_text('{"summary":"结构化摘要"}') == "结构化摘要"
     assert LLMProcessor._extract_summary_text('Here is the JSON requested: ```json\n{"summary":"带包裹的摘要"}\n```') == "带包裹的摘要"
+    assert LLMProcessor._extract_summary_text("Here is the JSON requested: ```") == ""
+    assert LLMProcessor._extract_summary_text("{") == ""
     assert LLMProcessor._extract_summary_text("plain text") == "plain text"
+
+
+def test_extract_topic_tags_deduplicates_and_limits() -> None:
+    tags = LLMProcessor._extract_topic_tags('{"tags":["RL","Agent","#RL","Kimi","MoE","Verl","Extra"]}')
+
+    assert tags == ["RL", "Agent", "Kimi", "MoE", "Verl", "Extra"]
+
+
+def test_fallback_topic_tags_uses_known_entities() -> None:
+    tags = LLMProcessor._fallback_topic_tags("Kimi agent uses verl for RL training with MoE support")
+
+    assert tags[:4] == ["RL", "Agent", "MoE", "Kimi"]
 
 
 def test_fallback_article_summary_uses_first_body_paragraph() -> None:
