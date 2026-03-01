@@ -41,6 +41,13 @@ class ChatMessageRequest(BaseModel):
     new_session: bool = False
 
 
+class ChatPrepareRequest(BaseModel):
+    article_id: str
+    model: str = "flash"
+    session_id: str | None = None
+    new_session: bool = False
+
+
 class FlomoSaveRequest(BaseModel):
     content: str
     article_id: str | None = None
@@ -361,6 +368,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except TimeoutError as exc:
             raise HTTPException(status_code=504, detail="整轮聊天请求超时，请稍后重试，或先切换回 Flash。") from exc
+        except ChatTimeoutError as exc:
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/chat/prepare")
+    async def chat_prepare(payload: ChatPrepareRequest) -> dict:
+        article = storage_manager.load_article(payload.article_id)
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    chat_service.prepare_session,
+                    article=article,
+                    article_id=payload.article_id,
+                    model_key=payload.model,
+                    session_id=payload.session_id,
+                    force_new_session=payload.new_session,
+                ),
+                timeout=chat_service.request_timeout_seconds(payload.model),
+            )
+        except TimeoutError as exc:
+            raise HTTPException(status_code=504, detail="论文上下文准备超时，请稍后重试。") from exc
         except ChatTimeoutError as exc:
             raise HTTPException(status_code=504, detail=str(exc)) from exc
         except ValueError as exc:

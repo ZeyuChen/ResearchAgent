@@ -1354,6 +1354,13 @@ body.layout-resizing {
   min-width: 96px;
 }
 
+.chat-pending-label {
+  margin-top: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
 .typing-indicator {
   display: inline-flex;
   align-items: center;

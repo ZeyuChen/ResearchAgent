@@ -141,6 +141,71 @@ class ChatService:
         if not clean_message:
             raise ValueError("Message cannot be empty")
 
+        session, context = self._prepare_session_context(
+            article=article,
+            article_id=article_id,
+            model_key=model_key,
+            session_id=session_id,
+            force_new_session=force_new_session,
+        )
+        prompt = self._build_turn_prompt(
+            article=article,
+            message=clean_message,
+            history=session.messages,
+            cache_kind=context.cache_kind,
+            include_inline_context=context.cache_status == "inline",
+        )
+        try:
+            response = self._generate_chat_response(prompt=prompt, context=context, model_name=session.model_name)
+        except Exception as exc:
+            if not context.cache_name or self._is_timeout_error(exc):
+                raise
+            LOGGER.warning("Gemini cached chat call failed for %s; rebuilding context: %s", article_id, exc)
+            context = self._rebuild_context(article=article, model_name=session.model_name)
+            session.context = context
+            self._persist_state()
+            response = self._generate_chat_response(prompt=prompt, context=context, model_name=session.model_name)
+        reply = (response.text or "").strip() or "我没有拿到有效回复，请换一个问法再试一次。"
+        usage = self.llm_processor.extract_usage(response, session.model_name)
+
+        now = datetime.now().isoformat(timespec="seconds")
+        session.messages.append({"role": "user", "text": clean_message, "created_at": now})
+        session.messages.append({"role": "assistant", "text": reply, "created_at": now, "usage": usage})
+        session.updated_at = now
+        self._persist_state()
+
+        return self._serialize_session(session)
+
+    def prepare_session(
+        self,
+        *,
+        article: dict,
+        article_id: str,
+        model_key: str,
+        session_id: str | None,
+        force_new_session: bool = False,
+    ) -> dict[str, Any]:
+        if not self.available():
+            raise RuntimeError("Gemini API is not configured")
+
+        session, _ = self._prepare_session_context(
+            article=article,
+            article_id=article_id,
+            model_key=model_key,
+            session_id=session_id,
+            force_new_session=force_new_session,
+        )
+        return self._serialize_session(session)
+
+    def _prepare_session_context(
+        self,
+        *,
+        article: dict,
+        article_id: str,
+        model_key: str,
+        session_id: str | None,
+        force_new_session: bool,
+    ) -> tuple[ChatSession, ChatContextHandle]:
         model_name = self._resolve_model_name(model_key)
         session = self._get_or_create_session(
             article_id=article_id,
@@ -154,34 +219,7 @@ class ChatService:
         if session.context.cache_name != context.cache_name or session.context.cache_status != context.cache_status:
             session.context = context
             self._persist_state()
-
-        prompt = self._build_turn_prompt(
-            article=article,
-            message=clean_message,
-            history=session.messages,
-            cache_kind=context.cache_kind,
-            include_inline_context=context.cache_status == "inline",
-        )
-        try:
-            response = self._generate_chat_response(prompt=prompt, context=context, model_name=model_name)
-        except Exception as exc:
-            if not context.cache_name or self._is_timeout_error(exc):
-                raise
-            LOGGER.warning("Gemini cached chat call failed for %s; rebuilding context: %s", article_id, exc)
-            context = self._rebuild_context(article=article, model_name=model_name)
-            session.context = context
-            self._persist_state()
-            response = self._generate_chat_response(prompt=prompt, context=context, model_name=model_name)
-        reply = (response.text or "").strip() or "我没有拿到有效回复，请换一个问法再试一次。"
-        usage = self.llm_processor.extract_usage(response, model_name)
-
-        now = datetime.now().isoformat(timespec="seconds")
-        session.messages.append({"role": "user", "text": clean_message, "created_at": now})
-        session.messages.append({"role": "assistant", "text": reply, "created_at": now, "usage": usage})
-        session.updated_at = now
-        self._persist_state()
-
-        return self._serialize_session(session)
+        return session, context
 
     def _get_or_create_session(
         self,

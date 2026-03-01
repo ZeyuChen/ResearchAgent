@@ -19,6 +19,7 @@ const state = {
   chatSessionId: null,
   chatMessages: [],
   chatPending: false,
+  chatPendingPhase: "",
   chatCache: null,
   pendingChatPlaceholder: null,
   chatForceNewSession: false,
@@ -704,7 +705,7 @@ function renderChatView() {
   if (!state.chatOptions.available) {
     nodes.chatStatus.textContent = "Gemini API 尚未配置";
   } else if (state.chatPending) {
-    nodes.chatStatus.textContent = "正在生成，点击停止可中断本轮请求";
+    nodes.chatStatus.textContent = describePendingPhaseStatus();
   } else {
     nodes.chatStatus.textContent = currentArticle ? "就绪" : "请选择一篇论文";
   }
@@ -757,9 +758,11 @@ function renderChatMessages() {
     row.className = `chat-message ${message.role}${message.pending ? " pending" : ""}${message.error ? " error" : ""}`;
     const meta = buildChatMessageMeta(message);
     if (message.pending) {
+      const phaseLabel = escapeHtml(describePendingPhaseLabel(message.phase || state.chatPendingPhase));
       row.innerHTML = `
         <div class="chat-bubble">
           <div class="chat-role">ResearchAgent</div>
+          <div class="chat-pending-label">${phaseLabel}</div>
           <div class="typing-indicator" aria-label="Gemini 正在思考">
             <span class="typing-dot"></span>
             <span class="typing-dot"></span>
@@ -864,6 +867,7 @@ function resetChatSession() {
   state.chatCache = null;
   state.pendingChatPlaceholder = null;
   state.chatForceNewSession = false;
+  state.chatPendingPhase = "";
 }
 
 function stopPendingChat() {
@@ -889,6 +893,7 @@ function stopPendingChat() {
   state.chatAbortReason = "";
   state.chatPendingSnapshot = null;
   state.activeChatRequestId = null;
+  state.chatPendingPhase = "";
   nodes.chatStatus.textContent = "已停止生成";
   renderChatView();
 }
@@ -900,6 +905,33 @@ function startFreshChatSession() {
 
 function getChatRequestTimeoutMs(modelKey) {
   return modelKey === "pro" ? 480000 : 150000;
+}
+
+function setPendingChatPhase(phase) {
+  state.chatPendingPhase = phase;
+  if (state.pendingChatPlaceholder) {
+    state.pendingChatPlaceholder.phase = phase;
+  }
+}
+
+function describePendingPhaseLabel(phase) {
+  if (phase === "preparing") {
+    return "准备上下文";
+  }
+  if (phase === "generating") {
+    return "模型生成中";
+  }
+  return "处理中";
+}
+
+function describePendingPhaseStatus() {
+  if (state.chatPendingPhase === "preparing") {
+    return "准备上下文中，正在上传或复用论文上下文";
+  }
+  if (state.chatPendingPhase === "generating") {
+    return "模型生成中，点击停止可中断本轮请求";
+  }
+  return "处理中，点击停止可中断本轮请求";
 }
 
 async function loadPersistedChatSession() {
@@ -971,7 +1003,9 @@ async function sendChatMessage() {
   state.pendingChatPlaceholder = {
     role: "assistant",
     pending: true,
+    phase: "preparing",
   };
+  state.chatPendingPhase = "preparing";
   state.chatMessages = [
     ...state.chatMessages,
     userMessage,
@@ -987,6 +1021,30 @@ async function sendChatMessage() {
   }, timeoutMs);
 
   try {
+    const prepareResponse = await fetch("/api/chat/prepare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: abortController.signal,
+      body: JSON.stringify({
+        article_id: article.article_id,
+        model: state.chatModelKey,
+        session_id: state.chatSessionId,
+        new_session: state.chatForceNewSession,
+      }),
+    });
+    if (state.activeChatRequestId !== requestId) {
+      return;
+    }
+    const preparePayload = await readJsonPayload(prepareResponse);
+    if (!prepareResponse.ok) {
+      throw new Error(preparePayload.detail || "论文上下文准备失败");
+    }
+    state.chatSessionId = preparePayload.session_id || state.chatSessionId;
+    state.chatCache = preparePayload.cache || state.chatCache;
+    state.chatForceNewSession = false;
+    setPendingChatPhase("generating");
+    renderChatView();
+
     const response = await fetch("/api/chat/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -996,7 +1054,7 @@ async function sendChatMessage() {
         message: draft,
         model: state.chatModelKey,
         session_id: state.chatSessionId,
-        new_session: state.chatForceNewSession,
+        new_session: false,
       }),
     });
     if (state.activeChatRequestId !== requestId) {
@@ -1026,6 +1084,7 @@ async function sendChatMessage() {
       state.chatCache = previousCache;
       state.pendingChatPlaceholder = null;
       state.chatForceNewSession = previousForceNewSession;
+      state.chatPendingPhase = "";
       state.chatMessages = [
         ...state.chatMessages,
         {
@@ -1046,6 +1105,7 @@ async function sendChatMessage() {
     state.chatCache = previousCache;
     state.pendingChatPlaceholder = null;
     state.chatForceNewSession = previousForceNewSession;
+    state.chatPendingPhase = "";
     state.chatMessages = [
       ...state.chatMessages,
       {
@@ -1067,6 +1127,7 @@ async function sendChatMessage() {
       state.chatAbortReason = "";
       state.chatPendingSnapshot = null;
       state.activeChatRequestId = null;
+      state.chatPendingPhase = "";
       if (requestSettled || !state.pendingChatPlaceholder) {
         renderChatView();
       }
