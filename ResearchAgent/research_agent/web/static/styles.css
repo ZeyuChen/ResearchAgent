@@ -1423,10 +1423,28 @@ body.layout-resizing {
   min-height: calc(100vh - 106px);
 }
 
+.app-shell.view-mode-both .reader-shell {
+  height: calc(100dvh - 154px);
+  min-height: 0;
+  align-items: stretch;
+}
+
 .analysis-panel,
 .pdf-panel {
   min-width: 0;
   min-height: calc(100vh - 106px);
+}
+
+.app-shell.view-mode-both .analysis-panel,
+.app-shell.view-mode-both .pdf-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.app-shell.view-mode-both .analysis-panel {
+  scrollbar-gutter: stable;
 }
 
 .analysis-topbar {
@@ -1641,6 +1659,14 @@ body.layout-resizing {
   align-self: start;
   height: calc(100dvh - 86px);
   max-height: calc(100dvh - 86px);
+}
+
+.app-shell.view-mode-both .pdf-panel {
+  position: static;
+  top: auto;
+  align-self: stretch;
+  height: 100%;
+  max-height: none;
 }
 
 .pdf-pane-head {
@@ -1890,6 +1916,18 @@ body.lightbox-open {
 @media (max-width: 1280px) {
   .reader-shell {
     grid-template-columns: 1fr;
+  }
+
+  .app-shell.view-mode-both .reader-shell {
+    height: auto;
+    min-height: calc(100vh - 106px);
+  }
+
+  .app-shell.view-mode-both .analysis-panel,
+  .app-shell.view-mode-both .pdf-panel {
+    height: auto;
+    min-height: calc(100vh - 106px);
+    overflow: visible;
   }
 
   .pdf-panel {
