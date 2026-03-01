@@ -44,7 +44,7 @@ For URL ingestion, Playwright is used to render dynamic content before extractio
 Each imported item is written to:
 
 ```text
-ResearchAgent/data/YYYY-MM-DD/<source>-<slug>/
+data/YYYY-MM-DD/<source>-<slug>/
 ```
 
 ### Files per item
@@ -102,7 +102,7 @@ Each session is bound to:
 State is stored locally in:
 
 ```text
-ResearchAgent/data/_system/chat_state.json
+data/_system/chat_state.json
 ```
 
 ### Context strategy

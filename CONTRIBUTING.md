@@ -16,14 +16,14 @@ This project is intentionally product-oriented: readability, auditability, and l
 ```bash
 python3.11 -m venv venv
 source venv/bin/activate
-pip install -r ResearchAgent/requirements.txt
+pip install -r requirements.txt
 playwright install chromium
 ```
 
 Run the app:
 
 ```bash
-venv/bin/python ResearchAgent/main.py serve
+venv/bin/python main.py serve
 ```
 
 ## Before Opening a PR
@@ -31,9 +31,9 @@ venv/bin/python ResearchAgent/main.py serve
 Run:
 
 ```bash
-python3.11 -m py_compile ResearchAgent/research_agent/services/*.py ResearchAgent/research_agent/web/api.py
-node --check ResearchAgent/research_agent/web/static/app.js
-venv/bin/python -m pytest ResearchAgent/tests
+python3.11 -m py_compile research_agent/services/*.py research_agent/web/api.py
+node --check research_agent/web/static/app.js
+venv/bin/python -m pytest tests
 ```
 
 ## Change Expectations

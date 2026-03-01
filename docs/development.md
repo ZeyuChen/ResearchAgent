@@ -7,7 +7,7 @@ This guide is for contributors who want to run, inspect, and extend ResearchAgen
 ```bash
 python3.11 -m venv venv
 source venv/bin/activate
-pip install -r ResearchAgent/requirements.txt
+pip install -r requirements.txt
 playwright install chromium
 ```
 
@@ -32,26 +32,26 @@ Do not commit real secrets.
 ### Start the UI
 
 ```bash
-venv/bin/python ResearchAgent/main.py serve
+venv/bin/python main.py serve
 ```
 
 ### Run one ingestion pass
 
 ```bash
-venv/bin/python ResearchAgent/main.py run --limit 5
+venv/bin/python main.py run --limit 5
 ```
 
 ### Run tests
 
 ```bash
-venv/bin/python -m pytest ResearchAgent/tests
+venv/bin/python -m pytest tests
 ```
 
 ### Static checks
 
 ```bash
-python3.11 -m py_compile ResearchAgent/research_agent/services/*.py ResearchAgent/research_agent/web/api.py
-node --check ResearchAgent/research_agent/web/static/app.js
+python3.11 -m py_compile research_agent/services/*.py research_agent/web/api.py
+node --check research_agent/web/static/app.js
 ```
 
 ## Code Organization
@@ -76,7 +76,7 @@ node --check ResearchAgent/research_agent/web/static/app.js
 - Prefer minimal business logic in the frontend; keep source of truth in metadata / API
 - Prefer `apply_patch` for file edits
 - Avoid committing generated data or local secrets
-- Preserve existing user data under `ResearchAgent/data/`
+- Preserve existing user data under `data/`
 
 ## Safe Release Checklist
 

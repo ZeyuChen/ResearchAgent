@@ -1,67 +1,218 @@
 # ResearchAgent
 
-ResearchAgent is a local-first research assistant for RL, LLM infrastructure, and technical report deep reading.
+ResearchAgent is a local-first RL / LLM infrastructure research workstation.
 
-It automates three things that usually stay fragmented:
+![ResearchAgent UI](docs/assets/researchagent-home.png)
 
-- ingesting fresh papers, arXiv links, PDFs, and technical blogs
-- turning raw sources into expert-grade Chinese analysis with Gemini
-- organizing everything into a searchable local knowledge base with a dual-pane reader and chat workspace
+It is built for people who do not just want to "summarize a PDF", but want a durable workflow:
 
-![ResearchAgent UI](ResearchAgent/docs/assets/researchagent-home.png)
+- collect papers and technical blogs
+- filter for relevance
+- generate structured Chinese deep dives
+- compare analysis with the original source
+- keep asking follow-up questions with persistent context
+- export the best excerpts into a personal note system
 
-The production code lives in [ResearchAgent/README.md](ResearchAgent/README.md).
+## Core Product Value
 
-## Why This Exists
+ResearchAgent combines four previously separate tools into one system:
 
-Most paper workflows break down in the same place: you can collect PDFs, or you can chat with a model, or you can take notes, but the context is not persistent and the outputs rarely become a reusable personal library.
+1. A source ingestion layer for arXiv papers, PDFs, GitHub releases, and dynamic technical blogs
+2. A local storage model that keeps raw files and generated knowledge together
+3. A Gemini-powered reading and chat layer with context reuse and cost visibility
+4. A browser UI optimized for knowledge retrieval, reading, and iterative understanding
 
-ResearchAgent is designed to close that gap:
+## Feature Set
 
-- local storage by day, with source files and generated Markdown kept together
-- Gemini-powered long-context reading, follow-up QA, and cost tracking
-- a browser UI optimized for comparison reading, not just file upload
-- Flomo export for excerpts and review snippets
+### Ingestion
 
-## What You Get
+- Auto-fetch from arXiv, GitHub releases, and web sources
+- Manual import for:
+  - arXiv links
+  - PDF uploads
+  - arbitrary URLs
+- Title-based arXiv suggestion search before import
+- Browser-rendered web capture for dynamic pages
 
-- arXiv / GitHub / web article ingestion
-- PDF-first parsing with Gemini File API
-- LaTeX source figure extraction for arXiv papers when available
-- dual-pane reading: analysis on the left, source PDF on the right
-- per-article token and cost accounting
-- per-session chat with context reuse and persistent history
-- tag folders, recent-read ordering, and manual curation
+### Reading
 
-## Quick Start
+- Gemini File API for PDF-first analysis
+- Rich Markdown rendering with code blocks and LaTeX
+- Dual-pane analysis vs source PDF reading
+- Page reference links into the original PDF
+- arXiv LaTeX asset extraction for figure galleries
+
+### Knowledge Base
+
+- Local archive by date
+- Tag-driven foldering and manual tag editing
+- Recent-read ordering
+- Per-item import time and last-read time
+- Token and cost accounting
+
+### Chat
+
+- Persistent multi-turn chat per article
+- Context reuse via Gemini cache / uploaded files
+- Explicit "prepare context" vs "generate answer" states
+- Session history switcher
+- Markdown-rendered responses
+- Stop / abort support for in-flight requests
+
+### Export
+
+- Flomo excerpt export with preview editing
+- automatic `#arxiv/...` tagging for arXiv content
+- tag carryover from article metadata
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A["Ingestion Inputs"] --> B["DataFetcher / ManualIngest"]
+    B --> C["StorageManager"]
+    C --> D["LLMProcessor (Gemini)"]
+    D --> C
+    C --> E["FastAPI Web API"]
+    E --> F["Web UI"]
+    F --> E
+    F --> G["Flomo Export"]
+```
+
+Detailed module notes are in [docs/architecture.md](docs/architecture.md).
+
+## Repository Structure
+
+```text
+.
+├── .env.example
+├── README.md
+├── main.py
+├── requirements.txt
+├── prompts/
+│   └── gemini_system_prompt.txt
+├── data/
+├── docs/
+│   ├── architecture.md
+│   ├── development.md
+│   └── scholaread-benchmark-roadmap.md
+├── research_agent/
+│   ├── config.py
+│   ├── models.py
+│   ├── services/
+│   └── web/
+└── tests/
+```
+
+## Environment Setup
+
+### 1. Create the isolated environment
 
 ```bash
 python3.11 -m venv venv
 source venv/bin/activate
-pip install -r ResearchAgent/requirements.txt
+pip install -r requirements.txt
 playwright install chromium
-venv/bin/python ResearchAgent/main.py serve
+```
+
+You can also use:
+
+```bash
+bash scripts/create_venv.sh
+```
+
+### 2. Configure secrets locally
+
+Do not hardcode keys into source control.
+
+Create a local `.env` from `.env.example`, or export variables directly:
+
+```bash
+export GEMINI_API_KEY="..."
+export GITHUB_TOKEN="..."
+export FLOMO_WEBHOOK_URL="..."
+```
+
+## Running the System
+
+### Run the pipeline once
+
+```bash
+venv/bin/python main.py run --limit 5
+```
+
+### Start the local web application
+
+```bash
+venv/bin/python main.py serve
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
-## Documentation
+### Run the scheduler
 
-- Product and usage: [ResearchAgent/README.md](ResearchAgent/README.md)
-- System architecture: [ResearchAgent/docs/architecture.md](ResearchAgent/docs/architecture.md)
-- Development guide: [ResearchAgent/docs/development.md](ResearchAgent/docs/development.md)
-- Competitive roadmap: [ResearchAgent/docs/scholaread-benchmark-roadmap.md](ResearchAgent/docs/scholaread-benchmark-roadmap.md)
-- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
-- License: [LICENSE](LICENSE)
-
-## Repository Layout
-
-```text
-.
-├── ResearchAgent/        # application code, docs, prompts, tests
-└── venv/                 # local virtual environment (ignored)
+```bash
+venv/bin/python main.py schedule --run-immediately
 ```
 
-## Release
+## Data Layout
 
-This repository is prepared for the `v0.1` milestone: a usable end-to-end local research workflow with ingestion, reading, chat, export, and a persistent knowledge base.
+Each imported source is archived under a date folder:
+
+```text
+data/2026-03-01/manual-arxiv-glm-5-from-vibe-coding-to-agentic-engineering/
+├── article.md
+├── metadata.json
+├── source.pdf
+└── source.html
+```
+
+This layout keeps retrieval simple:
+
+- `metadata.json` for indexing and UI display
+- `article.md` for generated knowledge
+- source files for auditability and reprocessing
+
+## Token and Cost Tracking
+
+ResearchAgent records:
+
+- prompt tokens
+- output tokens
+- total tokens
+- per-turn estimated cost
+- per-article estimated cost
+
+The system also tracks chat session costs in the UI. Cost estimation is based on Gemini pricing assumptions embedded in the app and surfaced in metadata for inspection.
+
+## Design Principles
+
+- Local-first persistence over ephemeral chats
+- Clear audit trail from generated insight back to raw source
+- Comparison reading instead of single-pane summarization
+- Product decisions that prioritize reading space over decorative UI
+- Minimal secret exposure: environment variables only, no committed credentials
+
+## Development and Testing
+
+```bash
+python3.11 -m py_compile research_agent/services/*.py research_agent/web/api.py
+node --check research_agent/web/static/app.js
+venv/bin/python -m pytest tests
+```
+
+See [docs/development.md](docs/development.md) for a fuller contributor workflow.
+
+Repository-level contribution rules are in [CONTRIBUTING.md](CONTRIBUTING.md), and the project is released under the [MIT License](LICENSE).
+
+## Current Scope (v0.1)
+
+`v0.1` is intentionally product-complete rather than feature-complete. It focuses on a coherent reading workflow:
+
+- import
+- analyze
+- compare with source
+- chat
+- save insights
+
+Future work is documented in [docs/scholaread-benchmark-roadmap.md](docs/scholaread-benchmark-roadmap.md).
