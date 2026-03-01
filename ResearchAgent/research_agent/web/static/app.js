@@ -28,6 +28,7 @@ const state = {
   chatRequestTimer: null,
   chatPendingSnapshot: null,
   activeChatRequestId: null,
+  chatStickToBottom: true,
   tagDraft: [],
 };
 
@@ -734,8 +735,8 @@ function renderChatMessages() {
   const previousScrollTop = nodes.chatMessages.scrollTop;
   const previousScrollHeight = nodes.chatMessages.scrollHeight;
   const previousClientHeight = nodes.chatMessages.clientHeight;
-  const distanceFromBottom = previousScrollHeight - previousClientHeight - previousScrollTop;
-  const wasNearBottom = distanceFromBottom <= 72;
+  const previousDistanceFromBottom = Math.max(0, previousScrollHeight - previousClientHeight - previousScrollTop);
+  const shouldStickToBottom = state.chatStickToBottom || state.chatPending;
 
   nodes.chatMessages.innerHTML = "";
   const visibleMessages = state.pendingChatPlaceholder
@@ -750,6 +751,7 @@ function renderChatMessages() {
       : "先选择一篇论文，再开始提问。";
     nodes.chatMessages.appendChild(empty);
     nodes.chatMessages.scrollTop = 0;
+    state.chatStickToBottom = true;
     return;
   }
 
@@ -785,14 +787,14 @@ function renderChatMessages() {
     nodes.chatMessages.appendChild(row);
   });
 
-  if (wasNearBottom || state.chatPending) {
+  if (shouldStickToBottom) {
     nodes.chatMessages.scrollTop = nodes.chatMessages.scrollHeight;
+    state.chatStickToBottom = true;
     return;
   }
 
   const nextScrollHeight = nodes.chatMessages.scrollHeight;
-  const delta = nextScrollHeight - previousScrollHeight;
-  nodes.chatMessages.scrollTop = Math.max(0, previousScrollTop + delta);
+  nodes.chatMessages.scrollTop = Math.max(0, nextScrollHeight - previousClientHeight - previousDistanceFromBottom);
 }
 
 function buildChatMessageMeta(message) {
@@ -868,6 +870,7 @@ function resetChatSession() {
   state.pendingChatPlaceholder = null;
   state.chatForceNewSession = false;
   state.chatPendingPhase = "";
+  state.chatStickToBottom = true;
 }
 
 function stopPendingChat() {
@@ -894,6 +897,7 @@ function stopPendingChat() {
   state.chatPendingSnapshot = null;
   state.activeChatRequestId = null;
   state.chatPendingPhase = "";
+  state.chatStickToBottom = true;
   nodes.chatStatus.textContent = "已停止生成";
   renderChatView();
 }
@@ -1006,6 +1010,7 @@ async function sendChatMessage() {
     phase: "preparing",
   };
   state.chatPendingPhase = "preparing";
+  state.chatStickToBottom = true;
   state.chatMessages = [
     ...state.chatMessages,
     userMessage,
@@ -2224,6 +2229,11 @@ bindIngestModalInteractions();
 bindFlomoInteractions();
 bindTagInteractions();
 bindLayoutResizeInteractions();
+nodes.chatMessages.addEventListener("scroll", () => {
+  const threshold = 48;
+  const distanceFromBottom = nodes.chatMessages.scrollHeight - nodes.chatMessages.clientHeight - nodes.chatMessages.scrollTop;
+  state.chatStickToBottom = distanceFromBottom <= threshold;
+});
 applyViewMode();
 
 bootstrap().catch((error) => {
