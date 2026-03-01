@@ -211,7 +211,7 @@ function renderArticleList() {
       .join("");
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
-      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 96))}</div>
+      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>

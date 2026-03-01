@@ -42,6 +42,10 @@ class ResearchPipeline:
         processed: list[dict] = []
         for item in items:
             try:
+                summary_usage = self.llm_processor._empty_usage()
+                if item.source == "arxiv" and item.summary:
+                    item.meta["source_abstract"] = item.summary
+                    item.summary, summary_usage = self.llm_processor.translate_arxiv_summary(item.summary, item.title)
                 source_files = self.data_fetcher.download_source_files(item)
                 stored_item = self.storage_manager.persist_item(item, source_files)
                 article, usage = self.llm_processor.generate_article_with_metrics(stored_item)
@@ -49,11 +53,12 @@ class ResearchPipeline:
                 if item.source == "arxiv" and item.summary:
                     seed_text = f"{item.title}\n\n{item.summary}"
                 topic_tags, tag_usage = self.llm_processor.generate_topic_tags(seed_text, stored_item.item)
-                usage = self.llm_processor.merge_usage(usage, tag_usage)
+                usage = self.llm_processor.merge_usage(summary_usage, usage, tag_usage)
                 self.storage_manager.write_article(stored_item, article)
                 metadata = self.storage_manager.update_metadata(
                     stored_item.metadata_path,
                     {
+                        "summary": item.summary,
                         "topic_tags": topic_tags,
                         "llm_usage": usage,
                     },

@@ -97,6 +97,11 @@ class ManualIngestService:
     ) -> dict:
         self._notify(progress_callback, 14, "已识别为 arXiv 链接，正在拉取论文元数据。")
         metadata = self._fetch_arxiv_metadata(arxiv_id)
+        translated_summary, summary_usage = self.llm_processor.translate_arxiv_summary(
+            metadata["summary"],
+            metadata["title"],
+            progress_callback=progress_callback,
+        )
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
         abs_url = f"https://arxiv.org/abs/{arxiv_id}"
         self._notify(progress_callback, 26, "正在下载 arXiv PDF 与摘要页面。")
@@ -107,7 +112,7 @@ class ManualIngestService:
         item = ResearchItem(
             source="manual-arxiv",
             title=metadata["title"],
-            summary=metadata["summary"],
+            summary=translated_summary,
             source_url=abs_url,
             html_url=abs_url,
             pdf_url=pdf_url,
@@ -115,6 +120,7 @@ class ManualIngestService:
             identifier=arxiv_id,
             authors=metadata["authors"],
             tags=["manual-upload", "arxiv", *metadata["tags"]],
+            meta={"arxiv_id": arxiv_id, "source_abstract": metadata["summary"]},
         )
         stored_item = self.storage_manager.persist_item(item, source_files)
         self._notify(progress_callback, 36, "论文已归档，准备进入 Gemini 全文阅读。")
@@ -124,11 +130,12 @@ class ManualIngestService:
             stored_item.item,
             progress_callback=progress_callback,
         )
-        usage = self.llm_processor.merge_usage(usage, tag_usage)
+        usage = self.llm_processor.merge_usage(summary_usage, usage, tag_usage)
         self.storage_manager.write_article(stored_item, article)
         self.storage_manager.update_metadata(
             stored_item.metadata_path,
             {
+                "summary": translated_summary,
                 "topic_tags": topic_tags,
                 "llm_usage": usage,
                 "updated_at": datetime.now().isoformat(timespec="seconds"),

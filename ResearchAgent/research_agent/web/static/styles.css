@@ -430,8 +430,8 @@ body.layout-resizing {
 
 .article-card {
   width: 100%;
-  min-height: 132px;
-  max-height: 132px;
+  min-height: 156px;
+  max-height: 156px;
   padding: 12px;
   border: 0;
   border-radius: 16px;
@@ -475,10 +475,10 @@ body.layout-resizing {
 .card-excerpt {
   margin-top: 6px;
   color: var(--muted);
-  font-size: 0.79rem;
-  line-height: 1.55;
+  font-size: 0.8rem;
+  line-height: 1.58;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -502,7 +502,7 @@ body.layout-resizing {
 }
 
 .card-mini {
-  margin-top: 10px;
+  margin-top: 8px;
   display: flex;
   justify-content: space-between;
   gap: 8px;

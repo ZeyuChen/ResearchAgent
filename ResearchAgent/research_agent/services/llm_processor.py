@@ -58,6 +58,43 @@ class LLMProcessor:
         article, _ = self.generate_article_with_metrics(stored_item)
         return article
 
+    def translate_arxiv_summary(
+        self,
+        summary: str,
+        title: str = "",
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[str, dict]:
+        source_summary = " ".join(summary.split())
+        if not source_summary:
+            return "", self._empty_usage()
+
+        if not self.client:
+            return source_summary, self._empty_usage()
+
+        self._notify(progress_callback, 22, "Gemini 正在翻译 arXiv 原始摘要。")
+        try:
+            response = self.client.models.generate_content(
+                model=self.settings.gemini_model,
+                contents=(
+                    "请把下面这段 arXiv 论文摘要翻译成自然、准确的中文。"
+                    "要求：只做忠实翻译，保持原意，不扩写，不删减，不添加评价，不解释术语。"
+                    "只输出最终中文译文本身。"
+                    "不要输出 JSON，不要写校验说明，不要分点，不要加“摘要：”前缀。\n\n"
+                    f"论文标题：{title}\n\n"
+                    f"英文摘要：\n{source_summary}"
+                ),
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=1024,
+                ),
+            )
+            usage = self.extract_usage(response, self.settings.gemini_model)
+            translated = self._clean_translated_summary_text(response.text or "")
+            return (translated or source_summary), usage
+        except Exception as exc:
+            LOGGER.warning("Gemini arXiv summary translation failed for %s: %s", title or "unknown", exc)
+            return source_summary, self._empty_usage()
+
     def summarize_article_markdown(
         self,
         article_markdown: str,
@@ -358,6 +395,37 @@ class LLMProcessor:
         if isinstance(decoded, dict):
             return str(decoded.get("summary", "")).strip()
         return payload
+
+    @staticmethod
+    def _clean_translated_summary_text(raw_text: str) -> str:
+        payload = raw_text.strip()
+        if not payload:
+            return ""
+        payload = payload.replace("{ \"translation\":", "").replace('{"translation":', "").strip()
+        payload = payload.removeprefix('"').removeprefix("'").strip()
+        payload = payload.removesuffix("}").removesuffix('"').removesuffix("'").strip()
+        cleaned_lines: list[str] = []
+        for raw_line in payload.splitlines():
+            line = raw_line.strip().lstrip("*- ").strip()
+            lowered = line.lower()
+            if not line:
+                continue
+            if any(
+                lowered.startswith(prefix)
+                for prefix in (
+                    "natural/accurate",
+                    "faithful",
+                    "no expansion",
+                    "no deletion",
+                    "no evaluation",
+                    "translation:",
+                    "中文译文:",
+                    "中文译文：",
+                )
+            ):
+                continue
+            cleaned_lines.append(line)
+        return " ".join(" ".join(cleaned_lines).split()).strip()
 
     @staticmethod
     def _decode_summary_payload(payload: str):
