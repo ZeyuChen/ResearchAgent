@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui22" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui22" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui23" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui23" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -25,7 +25,7 @@
             </svg>
           </button>
           <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
-            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui22" alt="ResearchAgent" />
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui23" alt="ResearchAgent" />
             <h1>ResearchAgent</h1>
           </a>
         </div>
@@ -153,7 +153,10 @@
               <h2 id="heroTitle">选择左侧论文开始阅读</h2>
             </div>
             <div class="hero-side">
-              <div id="metaBadges" class="badge-row"></div>
+              <div class="meta-tools">
+                <div id="metaBadges" class="badge-row"></div>
+                <button id="editTagsButton" class="subtle-action" type="button" disabled>编辑标签</button>
+              </div>
               <div class="view-toggle" id="viewToggle">
                 <button class="view-toggle-button active" data-mode="both" type="button">双栏</button>
                 <button class="view-toggle-button" data-mode="analysis" type="button">仅解析</button>
@@ -251,6 +254,36 @@
       </section>
     </div>
 
+    <div id="tagModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="tagModalTitle">
+      <div class="modal-backdrop" data-close-tag-modal="true"></div>
+      <section class="modal-panel tag-modal-panel">
+        <div class="modal-head">
+          <div>
+            <div class="block-title">标签</div>
+            <h3 id="tagModalTitle">整理当前论文</h3>
+          </div>
+          <button id="closeTagModal" class="icon-button" type="button" aria-label="关闭标签编辑窗口">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M5.5 5.5L14.5 14.5" />
+              <path d="M14.5 5.5L5.5 14.5" />
+            </svg>
+          </button>
+        </div>
+        <div id="tagDraftList" class="tag-draft-list"></div>
+        <label class="field-stack">
+          <span>新增标签</span>
+          <div class="tag-input-row">
+            <input id="tagInput" type="text" placeholder="输入标签后回车或点击添加" />
+            <button id="addTagButton" class="secondary-button" type="button">添加</button>
+          </div>
+        </label>
+        <div class="modal-actions">
+          <button id="cancelTagSave" class="secondary-button" type="button">取消</button>
+          <button id="confirmTagSave" class="primary-button" type="button">保存标签</button>
+        </div>
+      </section>
+    </div>
+
     <div id="ingestModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ingestModalTitle">
       <div class="modal-backdrop" data-close-ingest="true"></div>
       <section class="modal-panel">
@@ -296,6 +329,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui22"></script>
+    <script src="/static/app.js?v=20260301-ui23"></script>
   </body>
 </html>

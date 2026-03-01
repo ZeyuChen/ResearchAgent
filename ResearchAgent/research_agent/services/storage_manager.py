@@ -88,6 +88,20 @@ class StorageManager:
             return metadata
         return None
 
+    def update_article_tags(self, article_id: str, topic_tags: list[str]) -> dict | None:
+        normalized = [str(tag).strip() for tag in topic_tags if str(tag).strip()]
+        for metadata_path in self.data_dir.glob("*/*/metadata.json"):
+            metadata = self._read_metadata(metadata_path)
+            if metadata.get("article_id") != article_id:
+                continue
+            metadata["topic_tags"] = normalized
+            metadata["updated_at"] = datetime.now().isoformat(timespec="seconds")
+            metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            article_path = metadata_path.parent / "article.md"
+            metadata["markdown"] = article_path.read_text(encoding="utf-8") if article_path.exists() else ""
+            return metadata
+        return None
+
     def _build_item_dir_name(self, item: ResearchItem) -> str:
         slug = slugify(item.title, max_length=72) or slugify(item.identifier)
         return f"{item.source}-{slug}"

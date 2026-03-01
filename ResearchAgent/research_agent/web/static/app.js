@@ -22,6 +22,7 @@ const state = {
   chatCache: null,
   pendingChatPlaceholder: null,
   chatForceNewSession: false,
+  tagDraft: [],
 };
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "research-agent-sidebar-width";
@@ -48,6 +49,7 @@ const nodes = {
   libraryHeader: document.getElementById("libraryHeader"),
   heroTitle: document.getElementById("heroTitle"),
   metaBadges: document.getElementById("metaBadges"),
+  editTagsButton: document.getElementById("editTagsButton"),
   viewToggle: document.getElementById("viewToggle"),
   saveSummaryToFlomo: document.getElementById("saveSummaryToFlomo"),
   summaryText: document.getElementById("summaryText"),
@@ -86,6 +88,13 @@ const nodes = {
   flomoPreviewInput: document.getElementById("flomoPreviewInput"),
   cancelFlomoSave: document.getElementById("cancelFlomoSave"),
   confirmFlomoSave: document.getElementById("confirmFlomoSave"),
+  tagModal: document.getElementById("tagModal"),
+  closeTagModal: document.getElementById("closeTagModal"),
+  tagDraftList: document.getElementById("tagDraftList"),
+  tagInput: document.getElementById("tagInput"),
+  addTagButton: document.getElementById("addTagButton"),
+  cancelTagSave: document.getElementById("cancelTagSave"),
+  confirmTagSave: document.getElementById("confirmTagSave"),
   chatArticleSelect: document.getElementById("chatArticleSelect"),
   chatModelSelect: document.getElementById("chatModelSelect"),
   chatContextHint: document.getElementById("chatContextHint"),
@@ -284,9 +293,12 @@ function renderArticleList() {
     const usage = article.llm_usage || {};
     const pathLabel = buildArticleFolderPath(article);
     const arxivId = getArticleArxivId(article);
+    const isWebOnly = isHtmlOnlyArticle(article);
+    const tagsMarkup = buildTagMarkup(article.display_tags || [], 3);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
-      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>
+      ${isWebOnly ? "" : `<div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>`}
+      ${tagsMarkup ? `<div class="card-tags">${tagsMarkup}</div>` : ""}
       <div class="card-path">${escapeHtml(pathLabel)}</div>
       ${arxivId ? `<div class="card-arxiv-id">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       <div class="card-mini">
@@ -314,16 +326,15 @@ function renderLibraryBrowser() {
   filtered.forEach((article) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `library-browser-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
+    const isWebOnly = isHtmlOnlyArticle(article);
+    button.className = `library-browser-card ${isWebOnly ? "web-card" : ""} ${state.activeArticleId === article.article_id ? "selected" : ""}`.trim();
     const usage = article.llm_usage || {};
     const pathLabel = buildArticleFolderPath(article);
     const arxivId = getArticleArxivId(article);
-    const tags = (article.display_tags || []).slice(0, 4)
-      .map((tag) => `<span class="card-tag">${escapeHtml(tag)}</span>`)
-      .join("");
+    const tags = buildTagMarkup(article.display_tags || [], 4);
     button.innerHTML = `
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
-      <div class="library-browser-summary">${escapeHtml((article.summary || "").slice(0, 220))}</div>
+      ${isWebOnly ? "" : `<div class="library-browser-summary">${escapeHtml((article.summary || "").slice(0, 220))}</div>`}
       <div class="library-browser-path">${escapeHtml(pathLabel)}</div>
       ${arxivId ? `<div class="library-browser-arxiv">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
@@ -404,6 +415,12 @@ function getArticleArxivId(article) {
   return "";
 }
 
+function buildTagMarkup(tags, limit = 4) {
+  return (tags || []).slice(0, limit)
+    .map((tag) => `<span class="card-tag">#${escapeHtml(tag)}</span>`)
+    .join("");
+}
+
 async function loadArticle(articleId, nextWorkspace = "reader") {
   state.activeArticleId = articleId;
   state.chatArticleId = articleId;
@@ -454,6 +471,9 @@ function renderArticle(article) {
 
 function renderMetaBadges(article) {
   nodes.metaBadges.innerHTML = "";
+  if (nodes.editTagsButton) {
+    nodes.editTagsButton.disabled = !article;
+  }
   (article.display_tags || []).slice(0, 6).forEach((value) => {
     const badge = document.createElement("span");
     badge.className = "badge";
@@ -1083,7 +1103,8 @@ function closeLightbox() {
 function syncOverlayState() {
   const hasOverlay = !nodes.imageLightbox.classList.contains("hidden")
     || !nodes.ingestModal.classList.contains("hidden")
-    || !nodes.flomoModal.classList.contains("hidden");
+    || !nodes.flomoModal.classList.contains("hidden")
+    || !nodes.tagModal.classList.contains("hidden");
   document.body.classList.toggle("lightbox-open", hasOverlay);
 }
 
@@ -1177,6 +1198,98 @@ function closeFlomoModal() {
   state.flomoDraft = null;
   nodes.flomoModal.classList.add("hidden");
   syncOverlayState();
+}
+
+function openTagModal() {
+  const article = state.library.find((entry) => entry.article_id === state.activeArticleId);
+  if (!article) {
+    return;
+  }
+  state.tagDraft = [...new Set((article.display_tags || []).map((tag) => String(tag).trim()).filter(Boolean))];
+  renderTagDraft();
+  nodes.tagInput.value = "";
+  nodes.tagModal.classList.remove("hidden");
+  syncOverlayState();
+  window.setTimeout(() => nodes.tagInput.focus(), 30);
+}
+
+function closeTagModal() {
+  state.tagDraft = [];
+  nodes.tagInput.value = "";
+  nodes.tagModal.classList.add("hidden");
+  syncOverlayState();
+}
+
+function renderTagDraft() {
+  nodes.tagDraftList.innerHTML = "";
+  if (!state.tagDraft.length) {
+    nodes.tagDraftList.innerHTML = `<div class="tag-draft-empty">还没有标签。添加后会自动形成新的文件夹。</div>`;
+    return;
+  }
+  state.tagDraft.forEach((tag) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tag-draft-chip";
+    chip.innerHTML = `<span>#${escapeHtml(tag)}</span><span class="tag-draft-remove">×</span>`;
+    chip.addEventListener("click", () => {
+      state.tagDraft = state.tagDraft.filter((value) => value.toLowerCase() !== tag.toLowerCase());
+      renderTagDraft();
+    });
+    nodes.tagDraftList.appendChild(chip);
+  });
+}
+
+function addTagsFromInput() {
+  const raw = String(nodes.tagInput.value || "").trim();
+  if (!raw) {
+    return;
+  }
+  const incoming = raw
+    .split(/[,，\n]/)
+    .map((entry) => " ".join(entry.split()).trim().replace(/^#/, ""))
+    .filter(Boolean);
+  if (!incoming.length) {
+    nodes.tagInput.value = "";
+    return;
+  }
+  const existing = new Set(state.tagDraft.map((tag) => tag.toLowerCase()));
+  incoming.forEach((tag) => {
+    const limited = tag.slice(0, 24);
+    const key = limited.toLowerCase();
+    if (!limited || existing.has(key)) {
+      return;
+    }
+    existing.add(key);
+    state.tagDraft.push(limited);
+  });
+  state.tagDraft = state.tagDraft.slice(0, 12);
+  nodes.tagInput.value = "";
+  renderTagDraft();
+}
+
+async function saveTagDraft() {
+  const articleId = state.activeArticleId;
+  if (!articleId) {
+    closeTagModal();
+    return;
+  }
+  const response = await fetch(`/api/articles/${articleId}/tags`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tags: state.tagDraft }),
+  });
+  const payload = await readJsonPayload(response);
+  if (!response.ok) {
+    throw new Error(payload.detail || "标签保存失败");
+  }
+  await refreshLibrary();
+  renderArticle(payload);
+  if (state.workspace === "chat") {
+    renderChatSidebar();
+    renderChatView();
+  }
+  closeTagModal();
+  showToast("标签已更新");
 }
 
 async function saveSnippetToFlomo(content, sourceKind, formatted = false, articleId = null) {
@@ -1421,6 +1534,9 @@ function bindLightboxInteractions() {
     if (event.key === "Escape" && !nodes.flomoModal.classList.contains("hidden")) {
       closeFlomoModal();
     }
+    if (event.key === "Escape" && !nodes.tagModal.classList.contains("hidden")) {
+      closeTagModal();
+    }
   });
 }
 
@@ -1523,6 +1639,36 @@ function bindFlomoInteractions() {
     }
     if (!target.closest("#articleBody, #summaryText, #chatMessages")) {
       hideSelectionFlomoButton();
+    }
+  });
+}
+
+function bindTagInteractions() {
+  nodes.editTagsButton.addEventListener("click", openTagModal);
+  nodes.closeTagModal.addEventListener("click", closeTagModal);
+  nodes.cancelTagSave.addEventListener("click", closeTagModal);
+  nodes.tagModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.dataset.closeTagModal === "true") {
+      closeTagModal();
+    }
+  });
+  nodes.addTagButton.addEventListener("click", addTagsFromInput);
+  nodes.tagInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    addTagsFromInput();
+  });
+  nodes.confirmTagSave.addEventListener("click", async () => {
+    try {
+      await saveTagDraft();
+    } catch (error) {
+      showToast(error.message || "标签保存失败", "error");
     }
   });
 }
@@ -1760,6 +1906,7 @@ bindUploadInteractions();
 bindLightboxInteractions();
 bindIngestModalInteractions();
 bindFlomoInteractions();
+bindTagInteractions();
 bindLayoutResizeInteractions();
 applyViewMode();
 

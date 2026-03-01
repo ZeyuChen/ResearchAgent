@@ -47,6 +47,10 @@ class FlomoSaveRequest(BaseModel):
     formatted: bool = False
 
 
+class UpdateTagsRequest(BaseModel):
+    tags: list[str]
+
+
 def build_display_tags(article: dict) -> list[str]:
     return [str(tag).strip() for tag in article.get("topic_tags", []) if str(tag).strip()][:6]
 
@@ -246,6 +250,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "rendered_html": rendered_html,
         }
 
+    def normalize_topic_tags(raw_tags: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for raw_tag in raw_tags:
+            text = " ".join(str(raw_tag or "").replace("\n", " ").split()).strip().lstrip("#")
+            if not text:
+                continue
+            text = text[:24]
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+            if len(normalized) >= 12:
+                break
+        return normalized
+
     @app.get("/api/library")
     async def library() -> dict:
         articles = storage_manager.scan_library()
@@ -258,6 +279,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "articles": articles,
             "topics": [{"name": topic, "count": count} for topic, count in topic_counter.most_common(24)],
         }
+
+    @app.post("/api/articles/{article_id}/tags")
+    async def update_article_tags(article_id: str, payload: UpdateTagsRequest) -> dict:
+        article = storage_manager.update_article_tags(article_id, normalize_topic_tags(payload.tags))
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        return build_article_payload(article)
 
     @app.get("/api/search/arxiv")
     async def arxiv_search(q: str) -> dict:
