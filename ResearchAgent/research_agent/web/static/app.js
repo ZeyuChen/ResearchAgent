@@ -10,6 +10,7 @@ const state = {
   activeJobStartedAt: 0,
   sidebarCollapsed: false,
   viewMode: "both",
+  articleHasPdf: false,
 };
 
 const nodes = {
@@ -171,6 +172,10 @@ async function loadArticle(articleId) {
 
 function renderArticle(article) {
   state.activeArticleId = article.article_id;
+  state.articleHasPdf = Boolean(article.pdf_source_url);
+  if (!state.articleHasPdf && state.viewMode !== "analysis") {
+    state.viewMode = "analysis";
+  }
   renderArticleList();
 
   nodes.emptyState.classList.add("hidden");
@@ -537,9 +542,14 @@ function setViewMode(mode) {
 }
 
 function applyViewMode() {
+  if (!state.articleHasPdf && state.viewMode !== "analysis") {
+    state.viewMode = "analysis";
+  }
   nodes.appShell.classList.remove("view-mode-both", "view-mode-analysis", "view-mode-pdf");
   nodes.appShell.classList.add(`view-mode-${state.viewMode}`);
   [...nodes.viewToggle.querySelectorAll(".view-toggle-button")].forEach((button) => {
+    const disabled = !state.articleHasPdf && button.dataset.mode !== "analysis";
+    button.disabled = disabled;
     button.classList.toggle("active", button.dataset.mode === state.viewMode);
   });
 }

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Noto+Sans+SC:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/static/styles.css" />
@@ -19,11 +19,11 @@
           <button id="sidebarToggle" class="icon-button" type="button" aria-label="切换侧边栏">☰</button>
           <div class="brand-mark"></div>
           <div>
-            <div class="app-kicker">AI Research Workspace</div>
+            <div class="app-kicker">Research Workspace</div>
             <h1>ResearchAgent</h1>
           </div>
         </div>
-        <div class="app-bar-right">支持 arXiv、PDF 和技术博客的本地研究阅读器</div>
+        <div class="app-bar-right">Local paper reader for arXiv, PDFs, and web notes</div>
       </header>
 
       <div class="layout">
@@ -57,25 +57,25 @@
         <main class="main-stage">
           <section class="panel intake-panel">
             <div class="intake-copy">
-              <div class="section-kicker">Manual Ingest</div>
-              <h2>导入新材料，生成更完整的专业解读</h2>
-              <p>上传 PDF 时会显示上传进度和后台解析阶段。生成结果会包含更细的页码引用、关键图表解读和原文对照入口。</p>
+              <div class="section-kicker">Add Source</div>
+              <h2>Bring in the next paper</h2>
+              <p>ArXiv, PDFs, and technical posts.</p>
             </div>
 
             <div class="intake-actions">
               <label class="field-stack">
-                <span>arXiv 链接或技术博客网址</span>
+                <span>Link</span>
                 <div class="url-row">
-                  <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... 或 https://..." />
-                  <button id="ingestUrlButton" class="primary-button" type="button">开始解析</button>
+                  <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... or https://..." />
+                  <button id="ingestUrlButton" class="primary-button" type="button">导入</button>
                 </div>
               </label>
 
               <div id="uploadDropzone" class="dropzone" tabindex="0" role="button">
                 <input id="pdfUploadInput" type="file" accept="application/pdf" hidden />
                 <div class="drop-kicker">PDF Upload</div>
-                <div class="drop-title">拖拽 PDF 到这里，或点击选择文件</div>
-                <div class="drop-hint">上传后会展示进度条和 Gemini 解析阶段，避免卡住无反馈。</div>
+                <div class="drop-title">拖入 PDF，或点击选择</div>
+                <div class="drop-hint">Auto archive and analysis.</div>
               </div>
             </div>
 
@@ -106,8 +106,8 @@
           </section>
 
           <section id="emptyState" class="panel empty-state">
-            <h3>还没有选中的论文</h3>
-            <p>左侧导航支持收缩。选中文章后会进入双栏模式：左侧是解析和索引，右侧是原始 PDF 对照阅读。</p>
+            <h3>Start reading</h3>
+            <p>Pick an item from the library.</p>
           </section>
 
           <section id="articleView" class="reader-shell hidden">
