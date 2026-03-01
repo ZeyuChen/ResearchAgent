@@ -32,6 +32,8 @@ DOCUMENTCLASS_RE = re.compile(r"\\documentclass(?:\[[^\]]*\])?{[^}]+}")
 BEGIN_DOCUMENT_RE = re.compile(r"\\begin{document}")
 TRANSLATION_FENCE_RE = re.compile(r"^```(?:latex|tex)?\s*|\s*```$", re.IGNORECASE | re.MULTILINE)
 COMMENT_RE = re.compile(r"(?<!\\)%.*$", re.MULTILINE)
+USEPACKAGE_LINE_RE = re.compile(r"^(?P<indent>\s*)\\usepackage(?P<options>\[[^\]]*\])?{(?P<packages>[^}]+)}(?P<trailing>\s*)$")
+FONTAWESOME_COMMAND_RE = re.compile(r"\\(fa[A-Za-z]+)\b")
 SECTION_COMMANDS = (
     "part",
     "chapter",
@@ -56,6 +58,11 @@ ProgressCallback = Callable[[int, str], None]
 MAX_INLINE_TEX_CHARS = 14000
 TARGET_TEX_CHUNK_CHARS = 10000
 MAX_TEX_TRANSLATION_ATTEMPTS = 3
+OPTIONAL_PACKAGE_TFM_PROBES = {
+    "fontawesome": "FontAwesome.tfm",
+    "fontawesome5": "FontAwesome5FreeSolid-900.tfm",
+}
+CONFLICTING_CJK_PACKAGES = {"CJKutf8", "CJK"}
 CHINESE_SUPPORT_BLOCK = r"""
 % ResearchAgent Chinese translation support begin
 \usepackage{iftex}
@@ -83,6 +90,7 @@ CHINESE_SUPPORT_BLOCK = r"""
 \fi
 % ResearchAgent Chinese translation support end
 """.strip()
+COMPATIBILITY_MARKER = "% ResearchAgent compatibility fallbacks begin"
 
 
 class LatexTranslationService:
@@ -105,6 +113,7 @@ class LatexTranslationService:
         self.xelatex_path = shutil.which("xelatex")
         self.lualatex_path = shutil.which("lualatex")
         self.bibtex_path = shutil.which("bibtex")
+        self.kpsewhich_path = shutil.which("kpsewhich")
 
     @property
     def available(self) -> bool:
@@ -178,6 +187,7 @@ class LatexTranslationService:
                 kept_original_count += 1
 
         self._inject_chinese_support(translated_root)
+        compatibility_notes = self._apply_compile_compatibility_cleaning(translated_dir, translated_root)
 
         self._notify(progress_callback, 70, "LaTeX 翻译完成，正在进行中文 PDF 编译。")
         compile_result = self._compile_project(translated_root, build_dir, compile_log_path)
@@ -214,6 +224,7 @@ class LatexTranslationService:
             "fallback_used": fallback_used,
             "translated_files": translated_count,
             "kept_original_files": kept_original_count,
+            "compatibility_notes": compatibility_notes,
             "llm_usage": translation_usage,
             "error": compile_error,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
@@ -238,30 +249,32 @@ class LatexTranslationService:
         if not original.strip():
             return "", self.llm_processor._empty_usage(), False
 
-        if self._looks_like_bibliography_file(tex_path, original):
-            return original, self.llm_processor._empty_usage(), False
+        stripped_original = self._strip_tex_comments(original)
 
-        if len(original) <= MAX_INLINE_TEX_CHARS:
+        if self._looks_like_bibliography_file(tex_path, stripped_original):
+            return stripped_original, self.llm_processor._empty_usage(), stripped_original != original
+
+        if len(stripped_original) <= MAX_INLINE_TEX_CHARS:
             try:
                 translated, usage = self._translate_with_retries(
-                    original,
+                    stripped_original,
                     tex_path,
                     is_root=is_root,
                     is_fragment=False,
                     max_output_tokens=8192,
                 )
-                if self._translation_looks_usable(original, translated, is_root):
-                    return translated, usage, translated != original
+                if self._translation_looks_usable(stripped_original, translated, is_root):
+                    return translated, usage, translated != stripped_original
                 LOGGER.warning("Translated TeX output looks unsafe for %s; retrying with chunked mode", tex_path.name)
             except Exception as exc:
                 LOGGER.warning("Whole-file TeX translation failed for %s: %s; retrying in chunks", tex_path.name, exc)
 
-        translated, usage, changed = self._translate_tex_in_chunks(original, tex_path)
-        if self._translation_looks_usable(original, translated, is_root):
+        translated, usage, changed = self._translate_tex_in_chunks(stripped_original, tex_path)
+        if self._translation_looks_usable(stripped_original, translated, is_root):
             return translated, usage, changed
 
         LOGGER.warning("Chunked TeX output still looks unsafe for %s; keeping original file", tex_path.name)
-        return original, usage, False
+        return stripped_original, usage, stripped_original != original
 
     @staticmethod
     def _build_translation_prompt(
@@ -407,6 +420,44 @@ class LatexTranslationService:
         return [chunk for chunk in chunks if chunk]
 
     @staticmethod
+    def _strip_tex_comments(source_text: str) -> str:
+        cleaned_lines: list[str] = []
+        for line in source_text.splitlines(keepends=True):
+            newline = ""
+            if line.endswith("\r\n"):
+                newline = "\r\n"
+                working = line[:-2]
+            elif line.endswith("\n"):
+                newline = "\n"
+                working = line[:-1]
+            else:
+                working = line
+
+            escaped = False
+            comment_index = None
+            for index, char in enumerate(working):
+                if char == "%" and not escaped:
+                    comment_index = index
+                    break
+                escaped = char == "\\" and not escaped
+                if char != "\\":
+                    escaped = False
+
+            if comment_index is None:
+                cleaned_lines.append(working + newline)
+                continue
+
+            prefix = working[:comment_index].rstrip()
+            if prefix:
+                cleaned_lines.append(prefix + newline)
+            elif newline:
+                cleaned_lines.append(newline)
+
+        cleaned = "".join(cleaned_lines)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned
+
+    @staticmethod
     def _normalize_translated_tex(text: str) -> str:
         cleaned = TRANSLATION_FENCE_RE.sub("", text or "").strip()
         if cleaned.startswith("Here is") and "\\documentclass" in cleaned:
@@ -444,6 +495,202 @@ class LatexTranslationService:
             return
         updated = f"{content[:match.start()].rstrip()}\n\n{CHINESE_SUPPORT_BLOCK}\n\n{content[match.start():]}"
         tex_path.write_text(updated, encoding="utf-8")
+
+    def _apply_compile_compatibility_cleaning(self, translated_dir: Path, root_tex: Path) -> list[str]:
+        disabled_packages = self._detect_disabled_optional_packages(translated_dir)
+        if not disabled_packages:
+            disabled_packages = set()
+
+        notes: list[str] = []
+        fallback_commands: set[str] = set()
+        tex_files = sorted(translated_dir.rglob("*.tex"))
+
+        for tex_path in tex_files:
+            original = tex_path.read_text(encoding="utf-8", errors="ignore")
+            sanitized, removed_packages = self._strip_disabled_packages(original, disabled_packages)
+            sanitized, cjk_fix_count = self._sanitize_conflicting_cjk_commands(sanitized, removed_packages)
+            sanitized, inline_fix_count = self._sanitize_inline_section_commands(sanitized)
+            sanitized, table_fix_count = self._sanitize_table_section_commands(sanitized)
+            if removed_packages:
+                notes.extend(
+                    f"{tex_path.relative_to(translated_dir).as_posix()}: 已降级移除 \\usepackage{{{package}}}"
+                    for package in removed_packages
+                )
+                if any(package in {"fontawesome", "fontawesome5"} for package in removed_packages):
+                    fallback_commands.update(FONTAWESOME_COMMAND_RE.findall(original))
+            if cjk_fix_count:
+                notes.append(
+                    f"{tex_path.relative_to(translated_dir).as_posix()}: 已清理 {cjk_fix_count} 处旧 CJK 环境命令。"
+                )
+            if inline_fix_count:
+                notes.append(
+                    f"{tex_path.relative_to(translated_dir).as_posix()}: 已修正 {inline_fix_count} 处位于行内的章节命令。"
+                )
+            if table_fix_count:
+                notes.append(
+                    f"{tex_path.relative_to(translated_dir).as_posix()}: 已移除 {table_fix_count} 处表格环境内的章节命令。"
+                )
+            if removed_packages or cjk_fix_count or inline_fix_count or table_fix_count:
+                tex_path.write_text(sanitized, encoding="utf-8")
+
+        if fallback_commands:
+            self._inject_compatibility_fallbacks(root_tex, fallback_commands)
+            notes.append(f"已为 {len(fallback_commands)} 个 FontAwesome 命令注入空实现回退。")
+
+        return notes
+
+    def _detect_disabled_optional_packages(self, translated_dir: Path) -> set[str]:
+        disabled: set[str] = set()
+        discovered_packages: set[str] = set()
+        for tex_path in sorted(translated_dir.rglob("*.tex")):
+            for line in tex_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                match = USEPACKAGE_LINE_RE.match(line.strip())
+                if not match:
+                    continue
+                for package_name in (segment.strip() for segment in match.group("packages").split(",")):
+                    if package_name:
+                        discovered_packages.add(package_name)
+
+        for package_name, probe in OPTIONAL_PACKAGE_TFM_PROBES.items():
+            if package_name not in discovered_packages:
+                continue
+            if not self._kpsewhich_has_file(probe):
+                disabled.add(package_name)
+
+        if (self.xelatex_path or self.lualatex_path) and discovered_packages.intersection(CONFLICTING_CJK_PACKAGES):
+            disabled.update(discovered_packages.intersection(CONFLICTING_CJK_PACKAGES))
+
+        return disabled
+
+    def _kpsewhich_has_file(self, filename: str) -> bool:
+        if not self.kpsewhich_path:
+            return False
+        try:
+            result = subprocess.run(
+                [self.kpsewhich_path, filename],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except Exception:
+            return False
+        return result.returncode == 0 and bool(result.stdout.strip())
+
+    @staticmethod
+    def _strip_disabled_packages(source_text: str, disabled_packages: set[str]) -> tuple[str, list[str]]:
+        if not disabled_packages:
+            return source_text, []
+
+        removed: list[str] = []
+        sanitized_lines: list[str] = []
+        for line in source_text.splitlines(keepends=True):
+            stripped = line.rstrip("\r\n")
+            newline = line[len(stripped):]
+            match = USEPACKAGE_LINE_RE.match(stripped)
+            if not match:
+                sanitized_lines.append(line)
+                continue
+
+            packages = [segment.strip() for segment in match.group("packages").split(",") if segment.strip()]
+            kept = [package for package in packages if package not in disabled_packages]
+            removed_now = [package for package in packages if package in disabled_packages]
+            if not removed_now:
+                sanitized_lines.append(line)
+                continue
+
+            removed.extend(removed_now)
+            if kept:
+                rebuilt = (
+                    f"{match.group('indent')}\\usepackage"
+                    f"{match.group('options') or ''}"
+                    f"{{{','.join(kept)}}}"
+                    f"{match.group('trailing') or ''}"
+                    f"{newline}"
+                )
+                sanitized_lines.append(rebuilt)
+            elif newline:
+                sanitized_lines.append(newline)
+
+        unique_removed = list(dict.fromkeys(removed))
+        return "".join(sanitized_lines), unique_removed
+
+    @staticmethod
+    def _sanitize_inline_section_commands(source_text: str) -> tuple[str, int]:
+        fixes = 0
+        sanitized_lines: list[str] = []
+        pattern = re.compile(
+            r"(?P<prefix>\S[^\n]*?)(?P<command>\\(?:chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?(?:\[[^\]]*\])?{[^{}]*})"
+        )
+
+        for line in source_text.splitlines(keepends=True):
+            if "&" not in line:
+                sanitized_lines.append(line)
+                continue
+            updated, count = pattern.subn(r"\g<prefix>", line)
+            fixes += count
+            sanitized_lines.append(updated)
+
+        return "".join(sanitized_lines), fixes
+
+    @staticmethod
+    def _sanitize_conflicting_cjk_commands(source_text: str, removed_packages: list[str]) -> tuple[str, int]:
+        if not set(removed_packages).intersection(CONFLICTING_CJK_PACKAGES):
+            return source_text, 0
+
+        patterns = (
+            r"\\begin{CJK(?:\*)?}{[^{}]*}{[^{}]*}",
+            r"\\end{CJK(?:\*)?}",
+            r"\\begin{CJK\*?}{[^{}]*}{[^{}]*}",
+            r"\\CJKfamily{[^{}]*}",
+        )
+        updated = source_text
+        fixes = 0
+        for pattern in patterns:
+            updated, count = re.subn(pattern, "", updated)
+            fixes += count
+        return updated, fixes
+
+    @staticmethod
+    def _sanitize_table_section_commands(source_text: str) -> tuple[str, int]:
+        fixes = 0
+        sanitized_lines: list[str] = []
+        depth = 0
+        begin_pattern = re.compile(r"\\begin{(?:tabular\*?|tabularx|array|longtable)}")
+        end_pattern = re.compile(r"\\end{(?:tabular\*?|tabularx|array|longtable)}")
+        section_pattern = re.compile(r"^\s*\\(?:chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?(?:\[[^\]]*\])?{[^{}]*}\s*$")
+
+        for line in source_text.splitlines(keepends=True):
+            begin_matches = len(begin_pattern.findall(line))
+            end_matches = len(end_pattern.findall(line))
+            in_table = depth > 0
+
+            if in_table and section_pattern.match(line.strip()):
+                fixes += 1
+                continue
+
+            sanitized_lines.append(line)
+            depth += begin_matches
+            depth = max(0, depth - end_matches)
+
+        return "".join(sanitized_lines), fixes
+
+    def _inject_compatibility_fallbacks(self, root_tex: Path, command_names: set[str]) -> None:
+        content = root_tex.read_text(encoding="utf-8", errors="ignore")
+        if COMPATIBILITY_MARKER in content:
+            return
+        match = BEGIN_DOCUMENT_RE.search(content)
+        if not match:
+            return
+
+        stubs = [COMPATIBILITY_MARKER]
+        for command_name in sorted(command_names):
+            stubs.append(f"\\providecommand{{\\{command_name}}}{{}}")
+        stubs.append("\\providecommand{\\faIcon}[1]{}")
+        stubs.append("\\providecommand{\\faStyle}[1]{}")
+        stubs.append("% ResearchAgent compatibility fallbacks end")
+        block = "\n".join(stubs)
+        updated = f"{content[:match.start()].rstrip()}\n\n{block}\n\n{content[match.start():]}"
+        root_tex.write_text(updated, encoding="utf-8")
 
     def _compile_project(self, root_tex: Path, build_dir: Path, log_path: Path) -> dict:
         build_dir.mkdir(parents=True, exist_ok=True)

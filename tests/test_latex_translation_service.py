@@ -68,3 +68,70 @@ def test_split_tex_into_chunks_keeps_section_boundaries() -> None:
     assert "".join(chunks) == source
     assert chunks[0].startswith("\\section{Intro}")
     assert any(chunk.startswith("\\section{Method}") for chunk in chunks[1:])
+
+
+def test_strip_tex_comments_removes_full_and_trailing_comments() -> None:
+    source = (
+        "% full-line comment\n"
+        "\\section{Intro} % keep heading\n"
+        "Accuracy is 95\\% today.\n"
+        "Text % trailing note\n"
+    )
+
+    stripped = LatexTranslationService._strip_tex_comments(source)
+
+    assert "% full-line comment" not in stripped
+    assert "\\section{Intro}" in stripped
+    assert "keep heading" not in stripped
+    assert "95\\%" in stripped
+    assert "trailing note" not in stripped
+
+
+def test_strip_disabled_packages_removes_fontawesome_and_keeps_others() -> None:
+    source = (
+        "\\usepackage{graphicx,fontawesome}\n"
+        "\\usepackage[table]{xcolor}\n"
+    )
+
+    sanitized, removed = LatexTranslationService._strip_disabled_packages(source, {"fontawesome"})
+
+    assert removed == ["fontawesome"]
+    assert "\\usepackage{graphicx}" in sanitized
+    assert "\\usepackage[table]{xcolor}" in sanitized
+    assert "fontawesome" not in sanitized
+
+
+def test_sanitize_inline_section_commands_removes_headings_from_table_rows() -> None:
+    source = "Tool-Decathlon & 39.2 & 23.\\\\subsubsection{代码评测基准评估}\n"
+
+    sanitized, fixes = LatexTranslationService._sanitize_inline_section_commands(source)
+
+    assert fixes == 1
+    assert "\\subsubsection" not in sanitized
+    assert sanitized.startswith("Tool-Decathlon & 39.2 & 23.")
+
+
+def test_sanitize_conflicting_cjk_commands_removes_cjk_wrappers() -> None:
+    source = "\\begin{CJK}{UTF8}{gbsn}\n正文\n\\end{CJK}\n"
+
+    sanitized, fixes = LatexTranslationService._sanitize_conflicting_cjk_commands(source, ["CJKutf8"])
+
+    assert fixes == 2
+    assert "\\begin{CJK}" not in sanitized
+    assert "\\end{CJK}" not in sanitized
+    assert "正文" in sanitized
+
+
+def test_sanitize_table_section_commands_removes_section_inside_tabular() -> None:
+    source = (
+        "\\begin{tabular}{ll}\n"
+        "\\subsubsection{错误小节}\n"
+        "A & B \\\\\n"
+        "\\end{tabular}\n"
+    )
+
+    sanitized, fixes = LatexTranslationService._sanitize_table_section_commands(source)
+
+    assert fixes == 1
+    assert "\\subsubsection" not in sanitized
+    assert "\\begin{tabular}{ll}" in sanitized
