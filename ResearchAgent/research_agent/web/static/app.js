@@ -22,10 +22,9 @@ const state = {
 };
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "research-agent-sidebar-width";
-const DEFAULT_SIDEBAR_WIDTH = 400;
-const CHAT_SIDEBAR_WIDTH = 420;
+const DEFAULT_SIDEBAR_RATIO = 0.3;
+const MAX_SIDEBAR_RATIO = 0.6;
 const MIN_SIDEBAR_WIDTH = 300;
-const MAX_SIDEBAR_WIDTH = 720;
 
 const nodes = {
   appShell: document.getElementById("appShell"),
@@ -1081,22 +1080,25 @@ function sleep(ms) {
 }
 
 function clampSidebarWidth(width) {
-  const maxFromViewport = Math.max(MIN_SIDEBAR_WIDTH, Math.floor(window.innerWidth * 0.62));
-  const ceiling = Math.min(MAX_SIDEBAR_WIDTH, maxFromViewport);
+  const ceiling = Math.max(MIN_SIDEBAR_WIDTH, Math.floor(window.innerWidth * MAX_SIDEBAR_RATIO));
   return Math.max(MIN_SIDEBAR_WIDTH, Math.min(width, ceiling));
 }
 
 function getCurrentSidebarWidth() {
   const raw = getComputedStyle(nodes.appShell).getPropertyValue("--sidebar-width").trim();
   const numeric = Number.parseFloat(raw);
-  return Number.isFinite(numeric) ? numeric : DEFAULT_SIDEBAR_WIDTH;
+  return Number.isFinite(numeric) ? numeric : getDefaultSidebarWidth();
+}
+
+function getDefaultSidebarWidth() {
+  return clampSidebarWidth(window.innerWidth * DEFAULT_SIDEBAR_RATIO);
 }
 
 function applySidebarWidth(width, persist = false) {
   if (!nodes.appShell) {
     return;
   }
-  const nextWidth = clampSidebarWidth(Number(width) || DEFAULT_SIDEBAR_WIDTH);
+  const nextWidth = clampSidebarWidth(Number(width) || getDefaultSidebarWidth());
   nodes.appShell.style.setProperty("--sidebar-width", `${nextWidth}px`);
   if (persist) {
     window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(nextWidth));
@@ -1105,7 +1107,7 @@ function applySidebarWidth(width, persist = false) {
 
 function loadSidebarWidthPreference() {
   const stored = Number.parseFloat(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || "");
-  applySidebarWidth(Number.isFinite(stored) ? stored : DEFAULT_SIDEBAR_WIDTH);
+  applySidebarWidth(Number.isFinite(stored) ? stored : getDefaultSidebarWidth());
 }
 
 function ensureChatSidebarWidth() {
@@ -1113,8 +1115,9 @@ function ensureChatSidebarWidth() {
     return;
   }
   const current = getCurrentSidebarWidth();
-  if (current < CHAT_SIDEBAR_WIDTH) {
-    applySidebarWidth(CHAT_SIDEBAR_WIDTH, true);
+  const recommended = getDefaultSidebarWidth();
+  if (current < recommended) {
+    applySidebarWidth(recommended, true);
   }
 }
 
