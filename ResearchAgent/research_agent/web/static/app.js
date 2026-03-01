@@ -22,7 +22,8 @@ const state = {
 };
 
 const SIDEBAR_WIDTH_STORAGE_KEY = "research-agent-sidebar-width";
-const DEFAULT_SIDEBAR_WIDTH = 360;
+const DEFAULT_SIDEBAR_WIDTH = 400;
+const CHAT_SIDEBAR_WIDTH = 420;
 const MIN_SIDEBAR_WIDTH = 300;
 const MAX_SIDEBAR_WIDTH = 720;
 
@@ -145,6 +146,7 @@ function renderWorkspace() {
 function setWorkspace(mode) {
   if (mode === "chat") {
     state.workspace = "chat";
+    ensureChatSidebarWidth();
     const targetArticleId = state.chatArticleId || state.activeArticleId || (state.library[0] && state.library[0].article_id) || null;
     renderWorkspace();
     if (targetArticleId && targetArticleId !== state.activeArticleId) {
@@ -1104,6 +1106,16 @@ function applySidebarWidth(width, persist = false) {
 function loadSidebarWidthPreference() {
   const stored = Number.parseFloat(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY) || "");
   applySidebarWidth(Number.isFinite(stored) ? stored : DEFAULT_SIDEBAR_WIDTH);
+}
+
+function ensureChatSidebarWidth() {
+  if (window.innerWidth <= 960) {
+    return;
+  }
+  const current = getCurrentSidebarWidth();
+  if (current < CHAT_SIDEBAR_WIDTH) {
+    applySidebarWidth(CHAT_SIDEBAR_WIDTH, true);
+  }
 }
 
 function escapeHtml(value) {

@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui10" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui10" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui11" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui11" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -25,7 +25,7 @@
             </svg>
           </button>
           <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
-            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui10" alt="ResearchAgent" />
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui11" alt="ResearchAgent" />
             <h1>ResearchAgent</h1>
           </a>
         </div>
@@ -83,7 +83,7 @@
           <div id="chatSidebar" class="sidebar-stack hidden">
             <section id="chatView" class="panel sidebar-chat-shell">
               <div class="chat-panel-head">
-                <select id="chatModelSelect" class="chat-compact-select" aria-label="选择模型"></select>
+                <div class="chat-panel-kicker">问大模型</div>
                 <button id="chatResetButton" class="icon-button compact" type="button" aria-label="新建对话" title="新建对话">
                   <svg viewBox="0 0 20 20" aria-hidden="true">
                     <path d="M10 4V16" />
@@ -102,15 +102,27 @@
               <div id="chatMessages" class="chat-messages sidebar"></div>
 
               <form id="chatComposer" class="chat-composer sidebar">
-                <textarea
-                  id="chatInput"
-                  rows="4"
-                  placeholder="追问算法、实验和工程细节"
-                ></textarea>
-                <div class="chat-shortcut-hint">Shift+Enter 换行，Cmd+Enter 发送</div>
-                <div class="chat-actions">
+                <div class="chat-input-shell">
+                  <textarea
+                    id="chatInput"
+                    rows="5"
+                    placeholder="追问算法、实验和工程细节"
+                  ></textarea>
+                  <div class="chat-composer-toolbar">
+                    <div class="chat-composer-meta">
+                      <select id="chatModelSelect" class="chat-compact-select" aria-label="选择模型"></select>
+                      <div class="chat-shortcut-hint">Shift+Enter 换行 · Cmd+Enter 发送</div>
+                    </div>
+                    <button id="chatSendButton" class="chat-send-button" type="submit" aria-label="发送">
+                      <svg viewBox="0 0 20 20" aria-hidden="true">
+                        <path d="M10 14.5V5.5" />
+                        <path d="M6.5 8.75L10 5.25L13.5 8.75" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div class="chat-actions compact-inline">
                   <div id="chatStatus" class="chat-status">就绪</div>
-                  <button id="chatSendButton" class="primary-button compact-send" type="submit">发送</button>
                 </div>
               </form>
             </section>
@@ -256,6 +268,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui10"></script>
+    <script src="/static/app.js?v=20260301-ui11"></script>
   </body>
 </html>
