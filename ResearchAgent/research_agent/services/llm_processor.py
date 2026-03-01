@@ -72,28 +72,49 @@ class LLMProcessor:
             return source_summary, self._empty_usage()
 
         self._notify(progress_callback, 22, "Gemini 正在翻译 arXiv 原始摘要。")
-        try:
-            response = self.client.models.generate_content(
-                model=self.settings.gemini_model,
-                contents=(
-                    "请把下面这段 arXiv 论文摘要翻译成自然、准确的中文。"
-                    "要求：只做忠实翻译，保持原意，不扩写，不删减，不添加评价，不解释术语。"
-                    "只输出最终中文译文本身。"
-                    "不要输出 JSON，不要写校验说明，不要分点，不要加“摘要：”前缀。\n\n"
-                    f"论文标题：{title}\n\n"
-                    f"英文摘要：\n{source_summary}"
-                ),
-                config=types.GenerateContentConfig(
-                    temperature=0.0,
-                    max_output_tokens=1024,
-                ),
-            )
-            usage = self.extract_usage(response, self.settings.gemini_model)
-            translated = self._clean_translated_summary_text(response.text or "")
-            return (translated or source_summary), usage
-        except Exception as exc:
-            LOGGER.warning("Gemini arXiv summary translation failed for %s: %s", title or "unknown", exc)
-            return source_summary, self._empty_usage()
+        best_translation = ""
+        total_usage = self._empty_usage()
+        for attempt in (1, 2):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.settings.gemini_model,
+                    contents=self._build_arxiv_translation_prompt(
+                        source_summary=source_summary,
+                        title=title,
+                        retry=attempt > 1,
+                    ),
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=2048,
+                    ),
+                )
+                usage = self.extract_usage(response, self.settings.gemini_model)
+                total_usage = self.merge_usage(total_usage, usage)
+                translated = self._extract_translated_summary_text(response.text or "")
+                if len(translated) > len(best_translation):
+                    best_translation = translated
+                if self._translation_looks_complete(source_summary, translated):
+                    return translated, total_usage
+                LOGGER.warning(
+                    "Gemini arXiv summary translation looks incomplete for %s on attempt %s",
+                    title or "unknown",
+                    attempt,
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "Gemini arXiv summary translation failed for %s on attempt %s: %s",
+                    title or "unknown",
+                    attempt,
+                    exc,
+                )
+
+        chunked_translation, chunked_usage = self._translate_arxiv_summary_in_chunks(source_summary, title)
+        if chunked_translation:
+            total_usage = self.merge_usage(total_usage, chunked_usage)
+            if len(chunked_translation) > len(best_translation):
+                best_translation = chunked_translation
+
+        return (best_translation or source_summary), total_usage
 
     def summarize_article_markdown(
         self,
@@ -401,6 +422,7 @@ class LLMProcessor:
         payload = raw_text.strip()
         if not payload:
             return ""
+        payload = payload.replace("```json", "").replace("```JSON", "").replace("```", "").strip()
         payload = payload.replace("{ \"translation\":", "").replace('{"translation":', "").strip()
         payload = payload.removeprefix('"').removeprefix("'").strip()
         payload = payload.removesuffix("}").removesuffix('"').removesuffix("'").strip()
@@ -413,6 +435,10 @@ class LLMProcessor:
             if any(
                 lowered.startswith(prefix)
                 for prefix in (
+                    "\"translation\":",
+                    "translation\" :",
+                    "{ \"translation\":",
+                    "{\"translation\":",
                     "natural/accurate",
                     "faithful",
                     "no expansion",
@@ -426,6 +452,117 @@ class LLMProcessor:
                 continue
             cleaned_lines.append(line)
         return " ".join(" ".join(cleaned_lines).split()).strip()
+
+    @staticmethod
+    def _build_arxiv_translation_prompt(*, source_summary: str, title: str, retry: bool) -> str:
+        retry_clause = (
+            "你上一次的输出可能没有翻译完整，这一次请从头完整翻译，不要中途截断。"
+            if retry
+            else ""
+        )
+        return (
+            "请把下面这段 arXiv 论文摘要完整翻译成自然、准确的中文。"
+            "要求：只做忠实翻译，保持原意，不扩写，不删减，不添加评价，不解释术语。"
+            "请保留原文中的列表编号、括号和关键技术名词。"
+            "只输出最终中文译文正文，不要输出 JSON、代码块、说明文字或“摘要：”前缀。"
+            f"{retry_clause}\n\n"
+            f"论文标题：{title}\n\n"
+            f"英文摘要：\n{source_summary}"
+        )
+
+    @staticmethod
+    def _extract_translated_summary_text(raw_text: str) -> str:
+        payload = raw_text.strip()
+        if not payload:
+            return ""
+        decoded = LLMProcessor._decode_summary_payload(payload)
+        if decoded is None:
+            start = payload.find("{")
+            end = payload.rfind("}")
+            if start != -1 and end > start:
+                decoded = LLMProcessor._decode_summary_payload(payload[start : end + 1])
+        if isinstance(decoded, dict):
+            candidate = str(decoded.get("translation", "")).strip()
+            if candidate:
+                return LLMProcessor._clean_translated_summary_text(candidate)
+        regex_match = re.search(r'"translation"\s*:\s*"(.*)', payload, re.DOTALL)
+        if regex_match:
+            candidate = regex_match.group(1).strip()
+            return LLMProcessor._clean_translated_summary_text(candidate)
+        return LLMProcessor._clean_translated_summary_text(payload)
+
+    @staticmethod
+    def _translation_looks_complete(source_summary: str, translated: str) -> bool:
+        text = " ".join(str(translated or "").split()).strip()
+        if not text:
+            return False
+        source_words = len(" ".join(source_summary.split()).split())
+        min_chars = max(80, min(320, int(source_words * 1.35)))
+        if len(text) < min_chars:
+            return False
+        if source_words >= 80 and text[-1] not in "。！？.!?）)]】":
+            return False
+        return True
+
+    def _translate_arxiv_summary_in_chunks(self, source_summary: str, title: str) -> tuple[str, dict]:
+        if not self.client:
+            return "", self._empty_usage()
+
+        chunks = self._split_english_summary_chunks(source_summary)
+        if len(chunks) <= 1:
+            return "", self._empty_usage()
+
+        translated_chunks: list[str] = []
+        total_usage = self._empty_usage()
+        for chunk in chunks:
+            try:
+                response = self.client.models.generate_content(
+                    model=self.settings.gemini_model,
+                    contents=(
+                        "下面是一段 arXiv 论文摘要片段。"
+                        "请将它忠实、完整地翻译成中文。"
+                        "要求：只翻译，不扩写，不删减，不解释。"
+                        "保留括号、编号和关键技术名词。"
+                        "只输出最终中文译文正文。\n\n"
+                        f"论文标题：{title}\n\n"
+                        f"英文摘要片段：\n{chunk}"
+                    ),
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=1024,
+                    ),
+                )
+                total_usage = self.merge_usage(total_usage, self.extract_usage(response, self.settings.gemini_model))
+                translated = self._extract_translated_summary_text(response.text or "")
+                if translated:
+                    translated_chunks.append(translated)
+            except Exception as exc:
+                LOGGER.warning("Gemini chunked arXiv summary translation failed for %s: %s", title or "unknown", exc)
+
+        merged = " ".join(chunk.strip() for chunk in translated_chunks if chunk.strip()).strip()
+        return merged, total_usage
+
+    @staticmethod
+    def _split_english_summary_chunks(source_summary: str, max_words: int = 55) -> list[str]:
+        sentences = re.split(r"(?<=[.!?])\s+", " ".join(source_summary.split()).strip())
+        chunks: list[str] = []
+        current: list[str] = []
+        current_words = 0
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            word_count = len(sentence.split())
+            if current and current_words + word_count > max_words:
+                chunks.append(" ".join(current).strip())
+                current = [sentence]
+                current_words = word_count
+                continue
+            current.append(sentence)
+            current_words += word_count
+        if current:
+            chunks.append(" ".join(current).strip())
+        return [chunk for chunk in chunks if chunk]
 
     @staticmethod
     def _decode_summary_payload(payload: str):
