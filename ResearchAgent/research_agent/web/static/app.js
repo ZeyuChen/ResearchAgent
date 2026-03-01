@@ -88,7 +88,10 @@ const nodes = {
   toastNotice: document.getElementById("toastNotice"),
   flomoModal: document.getElementById("flomoModal"),
   closeFlomoModal: document.getElementById("closeFlomoModal"),
+  flomoBoldButton: document.getElementById("flomoBoldButton"),
+  flomoItalicButton: document.getElementById("flomoItalicButton"),
   flomoPreviewInput: document.getElementById("flomoPreviewInput"),
+  flomoPreviewRendered: document.getElementById("flomoPreviewRendered"),
   cancelFlomoSave: document.getElementById("cancelFlomoSave"),
   confirmFlomoSave: document.getElementById("confirmFlomoSave"),
   tagModal: document.getElementById("tagModal"),
@@ -1276,6 +1279,7 @@ function openFlomoModal(content, sourceKind) {
     sourceKind,
   };
   nodes.flomoPreviewInput.value = content;
+  syncFlomoEditorPreview();
   nodes.flomoModal.classList.remove("hidden");
   syncOverlayState();
   nodes.flomoPreviewInput.focus();
@@ -1286,6 +1290,51 @@ function closeFlomoModal() {
   state.flomoDraft = null;
   nodes.flomoModal.classList.add("hidden");
   syncOverlayState();
+}
+
+function syncFlomoEditorPreview() {
+  if (!nodes.flomoPreviewRendered) {
+    return;
+  }
+  const text = String(nodes.flomoPreviewInput.value || "").trim();
+  if (!text) {
+    nodes.flomoPreviewRendered.innerHTML = `<span class="flomo-preview-placeholder">这里会显示保存到 Flomo 前的排版预览。</span>`;
+    return;
+  }
+  nodes.flomoPreviewRendered.innerHTML = renderFlomoRichPreview(text);
+}
+
+function renderFlomoRichPreview(text) {
+  const escaped = escapeHtml(String(text || ""));
+  const withBold = escaped.replace(/\*\*(.+?)\*\*/gs, "<strong>$1</strong>");
+  const withItalic = withBold.replace(/(^|[^\*])\*(?!\s)(.+?)(?<!\s)\*/gs, "$1<em>$2</em>");
+  return withItalic.replace(/\n/g, "<br />");
+}
+
+function applyFlomoInlineFormat(marker) {
+  const input = nodes.flomoPreviewInput;
+  const value = input.value;
+  const start = input.selectionStart ?? value.length;
+  const end = input.selectionEnd ?? value.length;
+  const selected = value.slice(start, end);
+  let nextValue = "";
+  let nextStart = start;
+  let nextEnd = end;
+
+  if (selected) {
+    nextValue = `${value.slice(0, start)}${marker}${selected}${marker}${value.slice(end)}`;
+    nextStart = start + marker.length;
+    nextEnd = end + marker.length;
+  } else {
+    nextValue = `${value.slice(0, start)}${marker}${marker}${value.slice(end)}`;
+    nextStart = start + marker.length;
+    nextEnd = nextStart;
+  }
+
+  input.value = nextValue;
+  input.focus();
+  input.setSelectionRange(nextStart, nextEnd);
+  syncFlomoEditorPreview();
 }
 
 function openTagModal() {
@@ -1643,6 +1692,25 @@ function bindIngestModalInteractions() {
 }
 
 function bindFlomoInteractions() {
+  nodes.flomoBoldButton.addEventListener("click", () => applyFlomoInlineFormat("**"));
+  nodes.flomoItalicButton.addEventListener("click", () => applyFlomoInlineFormat("*"));
+  nodes.flomoPreviewInput.addEventListener("input", syncFlomoEditorPreview);
+  nodes.flomoPreviewInput.addEventListener("keydown", (event) => {
+    if (!event.metaKey) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    if (key === "b") {
+      event.preventDefault();
+      applyFlomoInlineFormat("**");
+      return;
+    }
+    if (key === "i") {
+      event.preventDefault();
+      applyFlomoInlineFormat("*");
+    }
+  });
+
   nodes.saveSummaryToFlomo.addEventListener("click", async () => {
     try {
       const preview = await buildFlomoPreview(

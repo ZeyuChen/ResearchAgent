@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui24" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui24" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui25" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui25" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -25,7 +25,7 @@
             </svg>
           </button>
           <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
-            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui24" alt="ResearchAgent" />
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui25" alt="ResearchAgent" />
             <h1>ResearchAgent</h1>
           </a>
         </div>
@@ -246,7 +246,21 @@
             </svg>
           </button>
         </div>
-        <textarea id="flomoPreviewInput" class="flomo-preview-input" placeholder="这里可以微调准备保存的 Flomo 内容"></textarea>
+        <div class="flomo-editor-shell">
+          <div class="flomo-editor-toolbar">
+            <button id="flomoBoldButton" class="flomo-format-button" type="button" aria-label="加粗">
+              <strong>B</strong>
+            </button>
+            <button id="flomoItalicButton" class="flomo-format-button" type="button" aria-label="斜体">
+              <em>I</em>
+            </button>
+          </div>
+          <textarea id="flomoPreviewInput" class="flomo-preview-input" placeholder="这里可以微调准备保存的 Flomo 内容"></textarea>
+          <section class="flomo-preview-pane">
+            <div class="mini-title">预览</div>
+            <div id="flomoPreviewRendered" class="flomo-preview-rendered"></div>
+          </section>
+        </div>
         <div class="modal-actions">
           <button id="cancelFlomoSave" class="secondary-button" type="button">取消</button>
           <button id="confirmFlomoSave" class="primary-button" type="button">保存到 Flomo</button>
@@ -329,6 +343,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui24"></script>
+    <script src="/static/app.js?v=20260301-ui25"></script>
   </body>
 </html>
