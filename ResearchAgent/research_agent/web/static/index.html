@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui7" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui7" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui8" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui8" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -34,11 +34,28 @@
       <div class="layout">
         <aside id="sidebar" class="sidebar">
           <section class="panel nav-panel">
-            <button id="openIngestModal" class="primary-button new-source-button" type="button">导入资料</button>
-            <div class="workspace-nav" id="workspaceNav">
-              <button class="workspace-button active" data-workspace="library" type="button">论文 Library</button>
-              <button class="workspace-button" data-workspace="chat" type="button">问大模型</button>
+            <div class="sidebar-rail">
+              <button id="openIngestModal" class="rail-button rail-button-primary" type="button" aria-label="导入资料" title="导入资料">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M10 4V16" />
+                  <path d="M4 10H16" />
+                </svg>
+              </button>
+              <button class="workspace-button active" data-workspace="library" type="button" aria-label="论文 Library" title="论文 Library">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M4.5 5.5C4.5 4.67 5.17 4 6 4H14C14.83 4 15.5 4.67 15.5 5.5V15.5C15.5 16.33 14.83 17 14 17H6C5.17 17 4.5 16.33 4.5 15.5V5.5Z" />
+                  <path d="M7.5 7H12.5" />
+                  <path d="M7.5 10H12.5" />
+                  <path d="M7.5 13H11" />
+                </svg>
+              </button>
+              <button class="workspace-button" data-workspace="chat" type="button" aria-label="问大模型" title="问大模型">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="M5.5 6.5C5.5 5.67 6.17 5 7 5H13C13.83 5 14.5 5.67 14.5 6.5V11C14.5 11.83 13.83 12.5 13 12.5H9.2L6.5 15V12.5H7C6.17 12.5 5.5 11.83 5.5 11V6.5Z" />
+                </svg>
+              </button>
             </div>
+            <div id="workspaceNav" class="hidden"></div>
           </section>
 
           <div id="librarySidebar" class="sidebar-stack">
@@ -64,19 +81,38 @@
           </div>
 
           <div id="chatSidebar" class="sidebar-stack hidden">
-            <section class="panel chat-side-panel">
-              <label class="field-stack">
-                <span>关联论文</span>
-                <select id="chatArticleSelect"></select>
-              </label>
-
-              <div class="filter-block">
-                <div class="block-title">模型</div>
-                <div id="chatModelPicker" class="model-picker"></div>
+            <section id="chatView" class="panel sidebar-chat-shell">
+              <div class="chat-panel-head">
+                <select id="chatModelSelect" class="chat-compact-select" aria-label="选择模型"></select>
+                <button id="chatResetButton" class="icon-button compact" type="button" aria-label="新建对话" title="新建对话">
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M10 4V16" />
+                    <path d="M4 10H16" />
+                  </svg>
+                </button>
               </div>
 
-              <button id="newChatButton" class="secondary-button new-chat-button" type="button">新建对话</button>
+              <div class="chat-linked-row">
+                <span class="mini-title">当前论文</span>
+                <select id="chatArticleSelect" class="chat-compact-select" aria-label="选择论文"></select>
+              </div>
+
               <div id="chatContextHint" class="sidebar-note">对 arXiv / PDF 条目会优先准备原文缓存上下文。</div>
+
+              <div id="chatMessages" class="chat-messages sidebar"></div>
+
+              <form id="chatComposer" class="chat-composer sidebar">
+                <textarea
+                  id="chatInput"
+                  rows="4"
+                  placeholder="追问算法、实验和工程细节"
+                ></textarea>
+                <div class="chat-shortcut-hint">Shift+Enter 换行，Cmd+Enter 发送</div>
+                <div class="chat-actions">
+                  <div id="chatStatus" class="chat-status">就绪</div>
+                  <button id="chatSendButton" class="primary-button compact-send" type="submit">发送</button>
+                </div>
+              </form>
             </section>
           </div>
         </aside>
@@ -147,33 +183,6 @@
             </aside>
           </section>
 
-          <section id="chatView" class="panel chat-shell hidden">
-            <div class="chat-topbar">
-              <div>
-                <div class="mini-title">论文问答</div>
-                <h3 id="chatTitle">选择一篇论文后开始提问</h3>
-                <div id="chatMeta" class="chat-meta">默认使用 Gemini 3 Flash Preview。</div>
-              </div>
-              <button id="chatResetButton" class="secondary-button" type="button">新建对话</button>
-            </div>
-
-            <div id="chatMessages" class="chat-messages">
-              <div class="chat-empty">选择论文，输入你的问题，系统会基于原文和解析结果继续追问式讲解。</div>
-            </div>
-
-            <form id="chatComposer" class="chat-composer">
-              <textarea
-                id="chatInput"
-                rows="3"
-                placeholder="例如：这篇论文最核心的算法创新是什么？和现有方法相比真正提升在哪里？"
-              ></textarea>
-              <div class="chat-shortcut-hint">Shift+Enter 换行，Cmd+Enter 发送</div>
-              <div class="chat-actions">
-                <div id="chatStatus" class="chat-status">就绪</div>
-                <button id="chatSendButton" class="primary-button" type="submit">发送</button>
-              </div>
-            </form>
-          </section>
         </main>
       </div>
     </div>
@@ -238,6 +247,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui7"></script>
+    <script src="/static/app.js?v=20260301-ui8"></script>
   </body>
 </html>

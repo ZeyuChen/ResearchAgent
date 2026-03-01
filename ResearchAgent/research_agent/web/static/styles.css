@@ -134,7 +134,7 @@ select {
 
 .layout {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   min-height: calc(100vh - 61px);
   transition: grid-template-columns 0.18s ease;
 }
@@ -187,6 +187,10 @@ select {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
+}
+
+.nav-panel {
+  padding-top: 2px;
 }
 
 .empty-state,
@@ -294,35 +298,55 @@ select {
   margin-bottom: 8px;
 }
 
-.new-source-button {
-  width: 100%;
-  justify-content: center;
+.sidebar-rail {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+  border-radius: 16px;
+  background: rgba(17, 24, 39, 0.03);
 }
 
-.workspace-nav {
-  margin-top: 10px;
-  display: grid;
-  gap: 6px;
-}
-
+.rail-button,
 .workspace-button {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 38px;
-  padding: 0 12px;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
   border: 0;
   border-radius: 12px;
   background: transparent;
   color: var(--text-soft);
   cursor: pointer;
-  font-size: 0.84rem;
-  font-weight: 600;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
 }
 
+.rail-button svg,
+.workspace-button svg {
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rail-button:hover,
 .workspace-button:hover {
   background: rgba(255, 255, 255, 0.8);
+  color: var(--text);
+}
+
+.rail-button-primary {
+  background: #202123;
+  color: #ffffff;
+}
+
+.rail-button-primary:hover {
+  background: #111827;
+  color: #ffffff;
 }
 
 .workspace-button.active {
@@ -531,6 +555,51 @@ select {
   padding: 24px;
 }
 
+.sidebar-chat-shell {
+  min-height: calc(100vh - 98px);
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 14px;
+}
+
+.chat-panel-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.chat-linked-row {
+  display: grid;
+  gap: 8px;
+}
+
+.chat-compact-select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  outline: none;
+  appearance: none;
+}
+
+.chat-compact-select:focus {
+  border-color: rgba(16, 163, 127, 0.24);
+  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.08);
+}
+
+.icon-button.compact {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
 .intake-actions {
   display: grid;
   gap: 12px;
@@ -576,41 +645,7 @@ select {
   color: var(--text);
 }
 
-.new-chat-button {
-  width: 100%;
-  margin-top: 14px;
-}
-
-.model-picker {
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.model-chip {
-  display: inline-flex;
-  align-items: center;
-  width: 100%;
-  min-height: 44px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 14px;
-  background: var(--surface-soft);
-  color: var(--text-soft);
-  cursor: pointer;
-  text-align: left;
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.model-chip.active {
-  background: rgba(16, 163, 127, 0.1);
-  color: var(--accent-strong);
-  box-shadow: inset 0 0 0 1px rgba(16, 163, 127, 0.14);
-}
-
 .sidebar-note {
-  margin-top: 12px;
   color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.55;
@@ -797,38 +832,17 @@ select {
   color: var(--muted);
 }
 
-.chat-shell {
-  min-height: calc(100vh - 106px);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 14px;
-}
-
-.chat-topbar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.chat-topbar h3 {
-  margin: 4px 0 0;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.chat-meta {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
 .chat-messages {
   min-height: 0;
   overflow: auto;
   display: grid;
   gap: 14px;
   padding-right: 6px;
+}
+
+.chat-messages.sidebar {
+  gap: 10px;
+  padding-right: 2px;
 }
 
 .chat-empty {
@@ -841,6 +855,12 @@ select {
   text-align: center;
   padding: 24px;
   line-height: 1.7;
+}
+
+.chat-messages.sidebar .chat-empty {
+  min-height: 180px;
+  padding: 18px;
+  font-size: 0.82rem;
 }
 
 .chat-message {
@@ -861,6 +881,13 @@ select {
   padding: 14px 16px;
   background: var(--surface-soft);
   color: var(--text);
+}
+
+.chat-messages.sidebar .chat-bubble {
+  max-width: 100%;
+  width: 100%;
+  padding: 12px 13px;
+  border-radius: 16px;
 }
 
 .chat-message.user .chat-bubble {
@@ -973,6 +1000,10 @@ select {
   gap: 10px;
 }
 
+.chat-composer.sidebar {
+  gap: 8px;
+}
+
 .chat-shortcut-hint {
   color: var(--muted);
   font-size: 0.76rem;
@@ -992,6 +1023,12 @@ select {
   line-height: 1.6;
 }
 
+.chat-composer.sidebar textarea {
+  min-height: 92px;
+  border-radius: 16px;
+  padding: 12px 13px;
+}
+
 .chat-composer textarea:focus {
   border-color: rgba(16, 163, 127, 0.24);
   box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.08);
@@ -1006,6 +1043,12 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.compact-send {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
 }
 
 .chat-status {

@@ -25,7 +25,6 @@ const nodes = {
   appShell: document.getElementById("appShell"),
   sidebarToggle: document.getElementById("sidebarToggle"),
   openIngestModal: document.getElementById("openIngestModal"),
-  workspaceNav: document.getElementById("workspaceNav"),
   librarySidebar: document.getElementById("librarySidebar"),
   chatSidebar: document.getElementById("chatSidebar"),
   libraryBrowser: document.getElementById("libraryBrowser"),
@@ -69,12 +68,8 @@ const nodes = {
   ingestModal: document.getElementById("ingestModal"),
   closeIngestModal: document.getElementById("closeIngestModal"),
   chatArticleSelect: document.getElementById("chatArticleSelect"),
-  chatModelPicker: document.getElementById("chatModelPicker"),
-  newChatButton: document.getElementById("newChatButton"),
+  chatModelSelect: document.getElementById("chatModelSelect"),
   chatContextHint: document.getElementById("chatContextHint"),
-  chatView: document.getElementById("chatView"),
-  chatTitle: document.getElementById("chatTitle"),
-  chatMeta: document.getElementById("chatMeta"),
   chatMessages: document.getElementById("chatMessages"),
   chatComposer: document.getElementById("chatComposer"),
   chatInput: document.getElementById("chatInput"),
@@ -120,32 +115,41 @@ async function refreshChatOptions() {
 }
 
 function renderWorkspace() {
-  nodes.workspaceNav.querySelectorAll(".workspace-button").forEach((button) => {
+  document.querySelectorAll(".workspace-button").forEach((button) => {
     const isActive = button.dataset.workspace === "library"
       ? state.workspace === "library" || state.workspace === "reader"
       : button.dataset.workspace === state.workspace;
     button.classList.toggle("active", isActive);
   });
 
-  const isLibrary = state.workspace === "library";
-  const isReader = state.workspace === "reader";
-  const isChat = state.workspace === "chat";
-  nodes.librarySidebar.classList.toggle("hidden", isChat);
-  nodes.chatSidebar.classList.toggle("hidden", !isChat);
-  nodes.libraryBrowser.classList.toggle("hidden", !isLibrary);
-  nodes.libraryHeader.classList.toggle("hidden", !isReader);
+  const showChatSidebar = state.workspace === "chat";
+  const showReader = state.workspace === "reader" || (state.workspace === "chat" && Boolean(state.activeArticleId));
+  const showLibraryBrowser = !showReader;
+  nodes.librarySidebar.classList.toggle("hidden", showChatSidebar);
+  nodes.chatSidebar.classList.toggle("hidden", !showChatSidebar);
+  nodes.libraryBrowser.classList.toggle("hidden", !showLibraryBrowser);
+  nodes.libraryHeader.classList.toggle("hidden", !showReader);
   nodes.emptyState.classList.add("hidden");
-  nodes.articleView.classList.toggle("hidden", !isReader || !state.activeArticleId);
-  nodes.chatView.classList.toggle("hidden", !isChat);
+  nodes.articleView.classList.toggle("hidden", !showReader || !state.activeArticleId);
   renderChatView();
 }
 
 function setWorkspace(mode) {
-  state.workspace = mode === "chat" ? "chat" : "library";
-  renderWorkspace();
-  if (state.workspace === "chat") {
-    void loadPersistedChatSession();
+  if (mode === "chat") {
+    state.workspace = "chat";
+    const targetArticleId = state.chatArticleId || state.activeArticleId || (state.library[0] && state.library[0].article_id) || null;
+    renderWorkspace();
+    if (targetArticleId && targetArticleId !== state.activeArticleId) {
+      void loadArticle(targetArticleId, "chat");
+      return;
+    }
+    if (targetArticleId) {
+      void loadPersistedChatSession();
+    }
+    return;
   }
+  state.workspace = "library";
+  renderWorkspace();
 }
 
 function renderFilters() {
@@ -454,35 +458,22 @@ function renderChatArticleOptions() {
 }
 
 function renderChatModelOptions() {
-  if (!nodes.chatModelPicker) {
+  if (!nodes.chatModelSelect) {
     return;
   }
   const options = state.chatOptions.models || [];
-  nodes.chatModelPicker.innerHTML = "";
+  nodes.chatModelSelect.innerHTML = "";
   options.forEach((model) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `model-chip ${model.key === state.chatModelKey ? "active" : ""}`;
-    button.textContent = model.label;
-    button.title = model.description || "";
-    button.addEventListener("click", () => {
-      state.chatModelKey = model.key;
-      resetChatSession();
-      void loadPersistedChatSession();
-      renderChatSidebar();
-      renderChatView();
-    });
-    nodes.chatModelPicker.appendChild(button);
+    const option = document.createElement("option");
+    option.value = model.key;
+    option.textContent = model.label;
+    option.selected = model.key === state.chatModelKey;
+    nodes.chatModelSelect.appendChild(option);
   });
 }
 
 function renderChatView() {
   const currentArticle = getChatArticle();
-  const currentModel = getChatModel();
-  nodes.chatTitle.textContent = currentArticle ? `围绕《${currentArticle.title || "Untitled"}》继续追问` : "选择一篇论文后开始提问";
-  nodes.chatMeta.textContent = currentModel
-    ? `${currentModel.label} · ${describeCache(state.chatCache)}`
-    : "默认使用 Gemini 3 Flash Preview。";
   nodes.chatComposer.classList.toggle("disabled", !currentArticle || !state.chatOptions.available);
   nodes.chatInput.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
   nodes.chatSendButton.disabled = !currentArticle || !state.chatOptions.available || state.chatPending;
@@ -1047,7 +1038,7 @@ nodes.ingestUrlInput.addEventListener("keydown", (event) => {
 });
 
 nodes.sidebarToggle.addEventListener("click", toggleSidebar);
-nodes.workspaceNav.addEventListener("click", (event) => {
+document.addEventListener("click", (event) => {
   const button = event.target.closest(".workspace-button");
   if (!button) {
     return;
@@ -1064,15 +1055,19 @@ nodes.viewToggle.addEventListener("click", (event) => {
 });
 
 nodes.chatArticleSelect.addEventListener("change", (event) => {
-  state.chatArticleId = event.target.value;
+  const nextArticleId = event.target.value;
+  state.chatArticleId = nextArticleId;
   resetChatSession();
-  void loadPersistedChatSession();
+  void loadArticle(nextArticleId, "chat");
   renderChatSidebar();
   renderChatView();
 });
 
-nodes.newChatButton.addEventListener("click", () => {
-  startFreshChatSession();
+nodes.chatModelSelect.addEventListener("change", (event) => {
+  state.chatModelKey = event.target.value;
+  resetChatSession();
+  void loadPersistedChatSession();
+  renderChatSidebar();
   renderChatView();
 });
 
