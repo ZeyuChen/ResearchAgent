@@ -478,10 +478,13 @@ function renderChatMessages() {
         </div>
       `;
     } else {
+      const textContent = message.role === "assistant" && message.rendered_html
+        ? `<div class="chat-text markdown">${message.rendered_html}</div>`
+        : `<div class="chat-text">${escapeHtml(message.text || "")}</div>`;
       row.innerHTML = `
         <div class="chat-bubble">
           <div class="chat-role">${message.role === "user" ? "你" : "ResearchAgent"}</div>
-          <div class="chat-text">${escapeHtml(message.text || "")}</div>
+          ${textContent}
           ${meta ? `<div class="chat-bubble-meta">${meta}</div>` : ""}
         </div>
       `;

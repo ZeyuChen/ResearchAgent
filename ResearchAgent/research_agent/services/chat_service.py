@@ -12,6 +12,7 @@ from google.genai import types
 
 from research_agent.config import Settings
 from research_agent.services.llm_processor import LLMProcessor
+from research_agent.services.markdown_renderer import render_markdown
 from research_agent.services.storage_manager import StorageManager
 
 
@@ -309,6 +310,12 @@ class ChatService:
         )
 
     def _serialize_session(self, session: ChatSession) -> dict[str, Any]:
+        serialized_messages: list[dict[str, Any]] = []
+        for message in session.messages:
+            payload = dict(message)
+            if payload.get("role") == "assistant":
+                payload["rendered_html"] = render_markdown(str(payload.get("text", "")))
+            serialized_messages.append(payload)
         return {
             "session_id": session.session_id,
             "article_id": session.article_id,
@@ -319,7 +326,7 @@ class ChatService:
                 "status": session.context.cache_status,
                 "kind": session.context.cache_kind,
             },
-            "messages": list(session.messages),
+            "messages": serialized_messages,
             "updated_at": session.updated_at,
         }
 

@@ -777,6 +777,58 @@ select {
   font-size: 0.92rem;
 }
 
+.chat-text.markdown {
+  white-space: normal;
+}
+
+.chat-text.markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-text.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-text.markdown p,
+.chat-text.markdown ul,
+.chat-text.markdown ol {
+  margin: 0.8em 0;
+}
+
+.chat-text.markdown pre {
+  margin: 0.9em 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  overflow: auto;
+  font-family: "IBM Plex Mono", monospace;
+  background: rgba(17, 24, 39, 0.05);
+}
+
+.chat-text.markdown code {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.chat-text.markdown blockquote {
+  margin: 0.9em 0;
+  padding: 8px 12px;
+  border-left: 3px solid rgba(17, 24, 39, 0.18);
+  background: rgba(17, 24, 39, 0.04);
+  border-radius: 0 12px 12px 0;
+}
+
+.chat-text.markdown table {
+  width: 100%;
+  margin: 0.9em 0;
+  border-collapse: collapse;
+}
+
+.chat-text.markdown th,
+.chat-text.markdown td {
+  padding: 8px 10px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  text-align: left;
+}
+
 .chat-bubble-meta {
   margin-top: 10px;
   font-size: 0.72rem;
