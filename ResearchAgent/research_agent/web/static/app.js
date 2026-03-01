@@ -6,6 +6,7 @@ const state = {
   search: "",
   activeJobId: null,
   activeJobStartedAt: 0,
+  ingestSuggestions: [],
   sidebarCollapsed: false,
   workspace: "library",
   viewMode: "both",
@@ -64,6 +65,7 @@ const nodes = {
   pdfCaption: document.getElementById("pdfCaption"),
   ingestUrlInput: document.getElementById("ingestUrlInput"),
   ingestUrlButton: document.getElementById("ingestUrlButton"),
+  ingestSuggestions: document.getElementById("ingestSuggestions"),
   uploadDropzone: document.getElementById("uploadDropzone"),
   pdfUploadInput: document.getElementById("pdfUploadInput"),
   ingestStatus: document.getElementById("ingestStatus"),
@@ -84,6 +86,9 @@ const nodes = {
   chatSendButton: document.getElementById("chatSendButton"),
   chatResetButton: document.getElementById("chatResetButton"),
 };
+
+let ingestSuggestionTimer = null;
+let ingestSuggestionRequestId = 0;
 
 async function bootstrap() {
   loadSidebarWidthPreference();
@@ -265,10 +270,12 @@ function renderArticleList() {
     button.className = `article-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
     const pathLabel = buildArticleFolderPath(article);
+    const arxivId = getArticleArxivId(article);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
       <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>
       <div class="card-path">${escapeHtml(pathLabel)}</div>
+      ${arxivId ? `<div class="card-arxiv-id">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>
         <span>${compactUsd(usage.estimated_cost_usd || 0)}</span>
@@ -297,6 +304,7 @@ function renderLibraryBrowser() {
     button.className = `library-browser-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
     const pathLabel = buildArticleFolderPath(article);
+    const arxivId = getArticleArxivId(article);
     const tags = (article.display_tags || []).slice(0, 4)
       .map((tag) => `<span class="card-tag">${escapeHtml(tag)}</span>`)
       .join("");
@@ -304,6 +312,7 @@ function renderLibraryBrowser() {
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
       <div class="library-browser-summary">${escapeHtml((article.summary || "").slice(0, 220))}</div>
       <div class="library-browser-path">${escapeHtml(pathLabel)}</div>
+      ${arxivId ? `<div class="library-browser-arxiv">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       <div class="library-browser-footer">
         <span>${compactTokens(usage.total_tokens || 0)} · ${compactUsd(usage.estimated_cost_usd || 0)}</span>
@@ -361,6 +370,25 @@ function buildArticleFolderPath(article) {
     segments.push(topic);
   }
   return segments.join(" / ");
+}
+
+function getArticleArxivId(article) {
+  const direct = String(article.arxiv_id || "").trim();
+  if (direct) {
+    return direct;
+  }
+  const candidates = [
+    article.identifier || "",
+    article.source_url || "",
+    (article.meta && article.meta.arxiv_id) || "",
+  ];
+  for (const candidate of candidates) {
+    const match = String(candidate).match(/(\d{4}\.\d{4,5}(?:v\d+)?)/);
+    if (match) {
+      return match[1];
+    }
+  }
+  return "";
 }
 
 async function loadArticle(articleId, nextWorkspace = "reader") {
@@ -807,13 +835,23 @@ async function sendChatMessage() {
 }
 
 async function startUrlIngest() {
-  const url = nodes.ingestUrlInput.value.trim();
-  if (!url) {
+  const rawInput = nodes.ingestUrlInput.value.trim();
+  if (!rawInput) {
     showStatus("请输入 arXiv 链接或普通网址。", "error");
+    return;
+  }
+  let url = rawInput;
+  if (!isLikelyUrl(rawInput) && state.ingestSuggestions.length) {
+    url = state.ingestSuggestions[0].abs_url;
+    nodes.ingestUrlInput.value = url;
+  }
+  if (!isLikelyUrl(url)) {
+    showStatus("请输入有效 URL，或从下拉建议中选择一篇 arXiv 论文。", "error");
     return;
   }
 
   setIntakeBusy(true);
+  clearIngestSuggestions();
   setProgress(3, "已提交链接", "正在创建后台任务。");
   showStatus("后台开始抓取并解析内容。", "pending");
 
@@ -949,6 +987,7 @@ function openIngestModal() {
 function closeIngestModal() {
   nodes.ingestModal.classList.add("hidden");
   syncOverlayState();
+  clearIngestSuggestions();
   if (nodes.ingestUrlButton.disabled) {
     return;
   }
@@ -991,6 +1030,74 @@ function setProgress(percent, label, hint) {
   nodes.progressLabel.textContent = label;
   nodes.progressPercent.textContent = `${Math.max(0, Math.min(100, percent))}%`;
   nodes.progressHint.textContent = hint || "";
+}
+
+function clearIngestSuggestions() {
+  state.ingestSuggestions = [];
+  nodes.ingestSuggestions.innerHTML = "";
+  nodes.ingestSuggestions.classList.add("hidden");
+}
+
+function renderIngestSuggestions() {
+  nodes.ingestSuggestions.innerHTML = "";
+  if (!state.ingestSuggestions.length) {
+    nodes.ingestSuggestions.classList.add("hidden");
+    return;
+  }
+
+  state.ingestSuggestions.forEach((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "suggestion-card";
+    const published = formatSuggestionDate(entry.published_at);
+    button.innerHTML = `
+      <div class="suggestion-title">${escapeHtml(entry.title || "Untitled")}</div>
+      <div class="suggestion-meta">arXiv ${escapeHtml(entry.arxiv_id || "")}${published ? ` · ${escapeHtml(published)}` : ""}</div>
+      <div class="suggestion-summary">${escapeHtml((entry.summary || "").slice(0, 180))}</div>
+    `;
+    button.addEventListener("click", () => {
+      nodes.ingestUrlInput.value = entry.abs_url;
+      state.ingestSuggestions = [entry];
+      nodes.ingestSuggestions.innerHTML = "";
+      nodes.ingestSuggestions.classList.add("hidden");
+      showStatus(`已选中 arXiv ${entry.arxiv_id}，将优先导入 PDF 与源码。`, "pending");
+    });
+    nodes.ingestSuggestions.appendChild(button);
+  });
+  nodes.ingestSuggestions.classList.remove("hidden");
+}
+
+function formatSuggestionDate(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  return text.slice(0, 10);
+}
+
+function isLikelyUrl(value) {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+async function fetchArxivSuggestions(query) {
+  const requestId = ++ingestSuggestionRequestId;
+  try {
+    const response = await fetch(`/api/search/arxiv?q=${encodeURIComponent(query)}`);
+    const payload = await response.json();
+    if (requestId !== ingestSuggestionRequestId) {
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(payload.detail || "arXiv 搜索失败");
+    }
+    state.ingestSuggestions = payload.results || [];
+    renderIngestSuggestions();
+  } catch (error) {
+    if (requestId !== ingestSuggestionRequestId) {
+      return;
+    }
+    clearIngestSuggestions();
+  }
 }
 
 function toggleSidebar() {
@@ -1232,6 +1339,20 @@ nodes.searchInput.addEventListener("input", (event) => {
 });
 
 nodes.ingestUrlButton.addEventListener("click", startUrlIngest);
+nodes.ingestUrlInput.addEventListener("input", (event) => {
+  const value = event.target.value.trim();
+  if (ingestSuggestionTimer) {
+    window.clearTimeout(ingestSuggestionTimer);
+  }
+  if (!value || isLikelyUrl(value) || value.length < 4) {
+    ingestSuggestionRequestId += 1;
+    clearIngestSuggestions();
+    return;
+  }
+  ingestSuggestionTimer = window.setTimeout(() => {
+    void fetchArxivSuggestions(value);
+  }, 220);
+});
 nodes.ingestUrlInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();

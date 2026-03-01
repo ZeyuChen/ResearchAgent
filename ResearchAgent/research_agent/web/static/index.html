@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui13" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui13" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui14" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui14" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -25,7 +25,7 @@
             </svg>
           </button>
           <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
-            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui13" alt="ResearchAgent" />
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui14" alt="ResearchAgent" />
             <h1>ResearchAgent</h1>
           </a>
         </div>
@@ -242,11 +242,12 @@
 
         <div class="intake-actions">
           <label class="field-stack">
-            <span>Link</span>
+            <span>Link / Title</span>
             <div class="url-row">
-              <input id="ingestUrlInput" type="url" placeholder="https://arxiv.org/abs/... or https://..." />
+              <input id="ingestUrlInput" type="text" placeholder="粘贴 URL，或直接输入论文标题搜索 arXiv" autocomplete="off" />
               <button id="ingestUrlButton" class="primary-button" type="button">导入</button>
             </div>
+            <div id="ingestSuggestions" class="ingest-suggestions hidden"></div>
           </label>
 
           <div id="uploadDropzone" class="dropzone" tabindex="0" role="button">
@@ -268,6 +269,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui13"></script>
+    <script src="/static/app.js?v=20260301-ui14"></script>
   </body>
 </html>

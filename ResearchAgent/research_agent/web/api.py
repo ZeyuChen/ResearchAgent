@@ -4,6 +4,10 @@ import threading
 import re
 from collections import Counter
 from typing import Annotated
+from urllib.parse import quote_plus
+
+import feedparser
+import requests
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -80,6 +84,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "models": chat_service.model_catalog(),
         }
 
+    def search_arxiv_by_title(query: str, limit: int = 6) -> list[dict]:
+        normalized_query = " ".join(query.split()).strip()
+        if len(normalized_query) < 3:
+            return []
+        request_url = (
+            "https://export.arxiv.org/api/query"
+            f"?search_query=ti:{quote_plus(normalized_query)}"
+            f"&sortBy=relevance&sortOrder=descending&max_results={limit}"
+        )
+        response = requests.get(
+            request_url,
+            timeout=15,
+            headers={"User-Agent": "ResearchAgent/1.0 (+https://localhost)"},
+        )
+        response.raise_for_status()
+        feed = feedparser.parse(response.text)
+        results: list[dict] = []
+        for entry in feed.entries:
+            arxiv_id = ""
+            match = ARXIV_ID_RE.search(str(getattr(entry, "id", "")) or "")
+            if match:
+                arxiv_id = match.group(1)
+            if not arxiv_id:
+                continue
+            results.append(
+                {
+                    "title": " ".join(str(getattr(entry, "title", "")).split()),
+                    "summary": " ".join(str(getattr(entry, "summary", "")).split()),
+                    "arxiv_id": arxiv_id,
+                    "abs_url": f"https://arxiv.org/abs/{arxiv_id}",
+                    "pdf_url": f"https://arxiv.org/pdf/{arxiv_id}.pdf",
+                    "published_at": str(getattr(entry, "published", "")),
+                }
+            )
+        return results
+
     def infer_arxiv_id(article: dict) -> str:
         for candidate in (
             article.get("identifier", ""),
@@ -147,11 +187,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         topic_counter: Counter[str] = Counter()
         for article in articles:
             article["display_tags"] = build_display_tags(article)
+            article["arxiv_id"] = infer_arxiv_id(article)
             topic_counter.update(article["display_tags"])
         return {
             "articles": articles,
             "topics": [{"name": topic, "count": count} for topic, count in topic_counter.most_common(24)],
         }
+
+    @app.get("/api/search/arxiv")
+    async def arxiv_search(q: str) -> dict:
+        try:
+            results = search_arxiv_by_title(q)
+        except requests.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"arXiv search failed: {exc}") from exc
+        return {"results": results}
 
     @app.get("/api/articles/{article_id}")
     async def article_detail(article_id: str) -> dict:
