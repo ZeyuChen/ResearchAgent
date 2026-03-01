@@ -10,8 +10,8 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
-    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui15" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui15" />
+    <link rel="icon" type="image/svg+xml" href="/static/research-agent-mark.svg?v=20260301-ui16" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260301-ui16" />
   </head>
   <body>
     <div class="app-shell view-mode-both" id="appShell">
@@ -25,7 +25,7 @@
             </svg>
           </button>
           <a class="brand-link" href="/" aria-label="ResearchAgent 首页">
-            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui15" alt="ResearchAgent" />
+            <img class="brand-mark" src="/static/research-agent-mark.svg?v=20260301-ui16" alt="ResearchAgent" />
             <h1>ResearchAgent</h1>
           </a>
         </div>
@@ -229,6 +229,29 @@
 
     <button id="selectionFlomoButton" class="selection-flomo-button hidden" type="button">保存至 Flomo</button>
 
+    <div id="flomoModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="flomoModalTitle">
+      <div class="modal-backdrop" data-close-flomo="true"></div>
+      <section class="modal-panel flomo-modal-panel">
+        <div class="modal-head">
+          <div>
+            <div class="block-title">Flomo</div>
+            <h3 id="flomoModalTitle">保存前预览</h3>
+          </div>
+          <button id="closeFlomoModal" class="icon-button" type="button" aria-label="关闭 Flomo 预览窗口">
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M5.5 5.5L14.5 14.5" />
+              <path d="M14.5 5.5L5.5 14.5" />
+            </svg>
+          </button>
+        </div>
+        <textarea id="flomoPreviewInput" class="flomo-preview-input" placeholder="这里可以微调准备保存的 Flomo 内容"></textarea>
+        <div class="modal-actions">
+          <button id="cancelFlomoSave" class="secondary-button" type="button">取消</button>
+          <button id="confirmFlomoSave" class="primary-button" type="button">保存到 Flomo</button>
+        </div>
+      </section>
+    </div>
+
     <div id="ingestModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ingestModalTitle">
       <div class="modal-backdrop" data-close-ingest="true"></div>
       <section class="modal-panel">
@@ -274,6 +297,6 @@
       </section>
     </div>
 
-    <script src="/static/app.js?v=20260301-ui15"></script>
+    <script src="/static/app.js?v=20260301-ui16"></script>
   </body>
 </html>

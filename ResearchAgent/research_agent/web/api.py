@@ -44,6 +44,7 @@ class FlomoSaveRequest(BaseModel):
     content: str
     article_id: str | None = None
     source_kind: str = "selection"
+    formatted: bool = False
 
 
 def build_display_tags(article: dict) -> list[str]:
@@ -90,34 +91,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "models": chat_service.model_catalog(),
         }
 
+    def normalize_flomo_body(text: str) -> str:
+        normalized_lines: list[str] = []
+        for raw_line in str(text or "").replace("\r\n", "\n").split("\n"):
+            line = " ".join(raw_line.split()).strip()
+            if line:
+                normalized_lines.append(line)
+                continue
+            if normalized_lines and normalized_lines[-1] != "":
+                normalized_lines.append("")
+        while normalized_lines and normalized_lines[0] == "":
+            normalized_lines.pop(0)
+        while normalized_lines and normalized_lines[-1] == "":
+            normalized_lines.pop()
+        return "\n".join(normalized_lines).strip()
+
     def format_flomo_payload(text: str, article: dict | None, source_kind: str) -> str:
-        body = " ".join(text.split()).strip()
+        body = normalize_flomo_body(text)
         if not body:
             raise ValueError("Empty content cannot be saved")
 
-        lines: list[str] = []
+        sections: list[str] = []
+        tags: list[str] = []
         if article:
             arxiv_id = infer_arxiv_id(article)
             if arxiv_id:
-                lines.append(f"arxiv/{arxiv_id}")
+                tags.append(f"#arxiv/{arxiv_id}")
 
-            tags = [str(tag).strip().lstrip("#") for tag in article.get("topic_tags", []) if str(tag).strip()]
-            if tags:
-                lines.append(" ".join(f"#{tag}" for tag in tags[:8]))
+            topic_tags = [str(tag).strip().lstrip("#") for tag in article.get("topic_tags", []) if str(tag).strip()]
+            if topic_tags:
+                tags.extend(f"#{tag}" for tag in topic_tags[:8])
+
+        if tags:
+            sections.append(" ".join(tags))
 
         if source_kind == "chat":
-            lines.append("问答摘录")
+            sections.append("问答摘录")
         elif source_kind == "summary":
-            lines.append("阅读摘要")
+            sections.append("阅读摘要")
 
-        lines.append(body)
-        return "\n".join(lines)
+        sections.append(body)
+        return "\n\n".join(section for section in sections if section.strip())
 
-    def save_to_flomo(text: str, article: dict | None, source_kind: str) -> dict:
+    def save_to_flomo(text: str, article: dict | None, source_kind: str, formatted: bool = False) -> dict:
         if not app_settings.flomo_webhook_url:
             raise RuntimeError("Flomo webhook is not configured")
 
-        content = format_flomo_payload(text, article, source_kind)
+        content = normalize_flomo_body(text) if formatted else format_flomo_payload(text, article, source_kind)
+        if not content:
+            raise ValueError("Empty content cannot be saved")
         response = requests.post(
             app_settings.flomo_webhook_url,
             json={"content": content},
@@ -252,6 +274,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Article not found")
         return build_article_payload(article)
 
+    @app.post("/api/integrations/flomo/preview")
+    async def flomo_preview(payload: FlomoSaveRequest) -> dict:
+        article = None
+        if payload.article_id:
+            article = storage_manager.load_article(payload.article_id)
+            if not article:
+                raise HTTPException(status_code=404, detail="Article not found")
+        try:
+            content = normalize_flomo_body(payload.content) if payload.formatted else format_flomo_payload(
+                payload.content,
+                article,
+                payload.source_kind,
+            )
+            return {"content": content}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/integrations/flomo/save")
     async def flomo_save(payload: FlomoSaveRequest) -> dict:
         article = None
@@ -260,7 +299,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not article:
                 raise HTTPException(status_code=404, detail="Article not found")
         try:
-            return save_to_flomo(payload.content, article, payload.source_kind)
+            return save_to_flomo(payload.content, article, payload.source_kind, formatted=payload.formatted)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:

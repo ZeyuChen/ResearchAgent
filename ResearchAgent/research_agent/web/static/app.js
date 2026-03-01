@@ -7,6 +7,7 @@ const state = {
   activeJobId: null,
   activeJobStartedAt: 0,
   ingestSuggestions: [],
+  flomoDraft: null,
   selectionDraft: null,
   sidebarCollapsed: false,
   workspace: "library",
@@ -79,6 +80,11 @@ const nodes = {
   ingestModal: document.getElementById("ingestModal"),
   closeIngestModal: document.getElementById("closeIngestModal"),
   selectionFlomoButton: document.getElementById("selectionFlomoButton"),
+  flomoModal: document.getElementById("flomoModal"),
+  closeFlomoModal: document.getElementById("closeFlomoModal"),
+  flomoPreviewInput: document.getElementById("flomoPreviewInput"),
+  cancelFlomoSave: document.getElementById("cancelFlomoSave"),
+  confirmFlomoSave: document.getElementById("confirmFlomoSave"),
   chatArticleSelect: document.getElementById("chatArticleSelect"),
   chatModelSelect: document.getElementById("chatModelSelect"),
   chatContextHint: document.getElementById("chatContextHint"),
@@ -1015,7 +1021,9 @@ function closeLightbox() {
 }
 
 function syncOverlayState() {
-  const hasOverlay = !nodes.imageLightbox.classList.contains("hidden") || !nodes.ingestModal.classList.contains("hidden");
+  const hasOverlay = !nodes.imageLightbox.classList.contains("hidden")
+    || !nodes.ingestModal.classList.contains("hidden")
+    || !nodes.flomoModal.classList.contains("hidden");
   document.body.classList.toggle("lightbox-open", hasOverlay);
 }
 
@@ -1037,10 +1045,49 @@ function setProgress(percent, label, hint) {
   nodes.progressHint.textContent = hint || "";
 }
 
-async function saveSnippetToFlomo(content, sourceKind) {
+async function buildFlomoPreview(content, sourceKind, articleId = null) {
   const text = String(content || "").trim();
   if (!text) {
-    return;
+    throw new Error("没有可保存的内容");
+  }
+  const response = await fetch("/api/integrations/flomo/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      content: text,
+      article_id: articleId || state.activeArticleId || state.chatArticleId || null,
+      source_kind: sourceKind,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.detail || "生成 Flomo 预览失败");
+  }
+  return payload.content || "";
+}
+
+function openFlomoModal(content, sourceKind) {
+  state.flomoDraft = {
+    articleId: state.activeArticleId || state.chatArticleId || null,
+    sourceKind,
+  };
+  nodes.flomoPreviewInput.value = content;
+  nodes.flomoModal.classList.remove("hidden");
+  syncOverlayState();
+  nodes.flomoPreviewInput.focus();
+  nodes.flomoPreviewInput.setSelectionRange(nodes.flomoPreviewInput.value.length, nodes.flomoPreviewInput.value.length);
+}
+
+function closeFlomoModal() {
+  state.flomoDraft = null;
+  nodes.flomoModal.classList.add("hidden");
+  syncOverlayState();
+}
+
+async function saveSnippetToFlomo(content, sourceKind, formatted = false, articleId = null) {
+  const text = String(content || "").trim();
+  if (!text) {
+    throw new Error("没有可保存的内容");
   }
   try {
     const response = await fetch("/api/integrations/flomo/save", {
@@ -1048,32 +1095,18 @@ async function saveSnippetToFlomo(content, sourceKind) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content: text,
-        article_id: state.activeArticleId || state.chatArticleId || null,
+        article_id: articleId || state.activeArticleId || state.chatArticleId || null,
         source_kind: sourceKind,
+        formatted,
       }),
     });
     const payload = await response.json();
     if (!response.ok) {
       throw new Error(payload.detail || "保存到 Flomo 失败");
     }
-    nodes.selectionFlomoButton.textContent = "已保存";
-    window.setTimeout(() => {
-      if (!nodes.selectionFlomoButton.classList.contains("hidden")) {
-        nodes.selectionFlomoButton.textContent = "保存至 Flomo";
-      }
-    }, 1200);
+    return payload;
   } catch (error) {
-    const message = error.message || "保存到 Flomo 失败";
-    nodes.selectionFlomoButton.textContent = "保存失败";
-    window.setTimeout(() => {
-      nodes.selectionFlomoButton.textContent = "保存至 Flomo";
-      hideSelectionFlomoButton();
-    }, 1200);
-    if (!nodes.ingestModal.classList.contains("hidden")) {
-      showStatus(message, "error");
-    } else {
-      nodes.chatStatus.textContent = message;
-    }
+    throw error;
   }
 }
 
@@ -1118,7 +1151,7 @@ function updateSelectionFlomoButton() {
     return;
   }
 
-  const text = selection.toString().replace(/\s+/g, " ").trim();
+  const text = selection.toString().replace(/\r\n/g, "\n").trim();
   if (text.length < 8) {
     hideSelectionFlomoButton();
     return;
@@ -1290,6 +1323,9 @@ function bindLightboxInteractions() {
     if (event.key === "Escape" && !nodes.ingestModal.classList.contains("hidden") && !nodes.ingestUrlButton.disabled) {
       closeIngestModal();
     }
+    if (event.key === "Escape" && !nodes.flomoModal.classList.contains("hidden")) {
+      closeFlomoModal();
+    }
   });
 }
 
@@ -1309,7 +1345,16 @@ function bindIngestModalInteractions() {
 
 function bindFlomoInteractions() {
   nodes.saveSummaryToFlomo.addEventListener("click", async () => {
-    await saveSnippetToFlomo(nodes.summaryText.textContent || "", "summary");
+    try {
+      const preview = await buildFlomoPreview(
+        nodes.summaryText.textContent || "",
+        "summary",
+        state.activeArticleId || state.chatArticleId || null,
+      );
+      openFlomoModal(preview, "summary");
+    } catch (error) {
+      nodes.chatStatus.textContent = error.message || "生成 Flomo 预览失败";
+    }
   });
 
   nodes.selectionFlomoButton.addEventListener("click", async (event) => {
@@ -1319,10 +1364,49 @@ function bindFlomoInteractions() {
       return;
     }
     const draft = state.selectionDraft;
-    await saveSnippetToFlomo(draft.text, draft.sourceKind);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    hideSelectionFlomoButton();
+    try {
+      const preview = await buildFlomoPreview(
+        draft.text,
+        draft.sourceKind,
+        state.activeArticleId || state.chatArticleId || null,
+      );
+      openFlomoModal(preview, draft.sourceKind);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      hideSelectionFlomoButton();
+    } catch (error) {
+      nodes.chatStatus.textContent = error.message || "生成 Flomo 预览失败";
+    }
+  });
+
+  nodes.closeFlomoModal.addEventListener("click", closeFlomoModal);
+  nodes.cancelFlomoSave.addEventListener("click", closeFlomoModal);
+  nodes.flomoModal.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+    if (target.dataset.closeFlomo === "true") {
+      closeFlomoModal();
+    }
+  });
+  nodes.confirmFlomoSave.addEventListener("click", async () => {
+    if (!state.flomoDraft) {
+      closeFlomoModal();
+      return;
+    }
+    try {
+      await saveSnippetToFlomo(
+        nodes.flomoPreviewInput.value,
+        state.flomoDraft.sourceKind,
+        true,
+        state.flomoDraft.articleId,
+      );
+      closeFlomoModal();
+      nodes.chatStatus.textContent = "已保存到 Flomo";
+    } catch (error) {
+      nodes.chatStatus.textContent = error.message || "保存到 Flomo 失败";
+    }
   });
 
   document.addEventListener("selectionchange", () => {
@@ -1337,6 +1421,9 @@ function bindFlomoInteractions() {
       return;
     }
     if (target.closest("#selectionFlomoButton")) {
+      return;
+    }
+    if (target.closest("#flomoModal")) {
       return;
     }
     if (!target.closest("#articleBody, #summaryText, #chatMessages")) {
