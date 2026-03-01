@@ -648,7 +648,7 @@ body.layout-resizing {
   cursor: pointer;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   align-content: start;
   transition: background-color 0.16s ease, box-shadow 0.16s ease;
 }
@@ -675,7 +675,7 @@ body.layout-resizing {
 
 .card-title {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   font-weight: 600;
   line-height: 1.45;
 }
@@ -683,16 +683,16 @@ body.layout-resizing {
 .card-excerpt {
   margin-top: 6px;
   color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.58;
+  font-size: 0.74rem;
+  line-height: 1.5;
   display: -webkit-box;
-  -webkit-line-clamp: 5;
+  -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
 .card-tags {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -701,33 +701,17 @@ body.layout-resizing {
 .card-tag {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
+  padding: 2px 7px;
   border-radius: 999px;
   background: rgba(17, 24, 39, 0.05);
   color: var(--text-soft);
-  font-size: 0.69rem;
+  font-size: 0.64rem;
   font-weight: 600;
 }
 
-.card-path {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 600;
-  line-height: 1.45;
-}
-
-.card-arxiv-id,
-.library-browser-arxiv {
-  margin-top: 6px;
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  padding: 3px 8px;
-  border-radius: 999px;
+.card-tag-arxiv {
   background: rgba(109, 99, 255, 0.08);
   color: #5b4dff;
-  font-size: 0.69rem;
   font-weight: 700;
   letter-spacing: 0.01em;
 }
@@ -736,17 +720,17 @@ body.layout-resizing {
 .library-time-meta {
   margin-top: 6px;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   line-height: 1.45;
 }
 
 .card-mini {
-  margin-top: 8px;
+  margin-top: 6px;
   display: flex;
   justify-content: space-between;
   gap: 8px;
   color: var(--muted);
-  font-size: 0.73rem;
+  font-size: 0.68rem;
 }
 
 .library-browser {
@@ -766,13 +750,13 @@ body.layout-resizing {
 
 .library-browser-head h2 {
   margin: 4px 0 0;
-  font-size: 1.08rem;
+  font-size: 0.98rem;
   font-weight: 600;
 }
 
 .library-browser-meta {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
 }
 
 .library-browser-grid {
@@ -786,8 +770,8 @@ body.layout-resizing {
 
 .library-browser-card {
   display: grid;
-  gap: 8px;
-  padding: 14px;
+  gap: 7px;
+  padding: 13px;
   border: 0;
   border-radius: 18px;
   background: var(--surface-soft);
@@ -811,7 +795,7 @@ body.layout-resizing {
 }
 
 .library-browser-title {
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   font-weight: 600;
   line-height: 1.38;
   color: var(--text);
@@ -823,18 +807,12 @@ body.layout-resizing {
 
 .library-browser-summary {
   color: var(--muted);
-  font-size: 0.76rem;
-  line-height: 1.52;
+  font-size: 0.72rem;
+  line-height: 1.48;
   display: -webkit-box;
-  -webkit-line-clamp: 7;
+  -webkit-line-clamp: 8;
   -webkit-box-orient: vertical;
   overflow: hidden;
-}
-
-.library-browser-path {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-weight: 600;
 }
 
 .library-browser-footer {
@@ -843,7 +821,7 @@ body.layout-resizing {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   color: var(--muted);
 }
 

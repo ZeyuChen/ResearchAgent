@@ -348,17 +348,13 @@ function renderArticleList() {
     button.type = "button";
     button.className = `article-card ${state.activeArticleId === article.article_id ? "selected" : ""}`;
     const usage = article.llm_usage || {};
-    const pathLabel = buildArticleFolderPath(article);
-    const arxivId = getArticleArxivId(article);
     const isWebOnly = isHtmlOnlyArticle(article);
-    const tagsMarkup = buildTagMarkup(article.display_tags || [], 3);
+    const tagsMarkup = buildLibraryTagMarkup(article, 3);
     const timeMarkup = buildLibraryTimeMarkup(article);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
       ${isWebOnly ? "" : `<div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>`}
       ${tagsMarkup ? `<div class="card-tags">${tagsMarkup}</div>` : ""}
-      <div class="card-path">${escapeHtml(pathLabel)}</div>
-      ${arxivId ? `<div class="card-arxiv-id">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       ${timeMarkup}
       <div class="card-mini">
         <span>${compactTokens(usage.total_tokens || 0)}</span>
@@ -388,15 +384,11 @@ function renderLibraryBrowser() {
     const isWebOnly = isHtmlOnlyArticle(article);
     button.className = `library-browser-card ${isWebOnly ? "web-card" : ""} ${state.activeArticleId === article.article_id ? "selected" : ""}`.trim();
     const usage = article.llm_usage || {};
-    const pathLabel = buildArticleFolderPath(article);
-    const arxivId = getArticleArxivId(article);
-    const tags = buildTagMarkup(article.display_tags || [], 4);
+    const tags = buildLibraryTagMarkup(article, 4);
     const timeMarkup = buildLibraryTimeMarkup(article, true);
     button.innerHTML = `
       <div class="library-browser-title">${escapeHtml(article.title || "Untitled")}</div>
       ${isWebOnly ? "" : `<div class="library-browser-summary">${escapeHtml(article.summary || "")}</div>`}
-      <div class="library-browser-path">${escapeHtml(pathLabel)}</div>
-      ${arxivId ? `<div class="library-browser-arxiv">arXiv ${escapeHtml(arxivId)}</div>` : ""}
       ${tags ? `<div class="card-tags">${tags}</div>` : ""}
       ${timeMarkup}
       <div class="library-browser-footer">
@@ -527,6 +519,19 @@ function buildTagMarkup(tags, limit = 4) {
   return (tags || []).slice(0, limit)
     .map((tag) => `<span class="card-tag">#${escapeHtml(tag)}</span>`)
     .join("");
+}
+
+function buildLibraryTagMarkup(article, limit = 4) {
+  const tags = [];
+  const arxivId = getArticleArxivId(article);
+  if (arxivId) {
+    tags.push(`<span class="card-tag card-tag-arxiv">arXiv ${escapeHtml(arxivId)}</span>`);
+  }
+  const regularTags = buildTagMarkup(article.display_tags || [], limit);
+  if (regularTags) {
+    tags.push(regularTags);
+  }
+  return tags.join("");
 }
 
 async function loadArticle(articleId, nextWorkspace = "reader") {
