@@ -581,7 +581,6 @@ function renderVisualGallery(article) {
 
 function renderChatSidebar() {
   renderChatArticleOptions();
-  renderChatModelOptions();
   updateChatContextHint();
 }
 
@@ -637,6 +636,12 @@ function renderChatView() {
 }
 
 function renderChatMessages() {
+  const previousScrollTop = nodes.chatMessages.scrollTop;
+  const previousScrollHeight = nodes.chatMessages.scrollHeight;
+  const previousClientHeight = nodes.chatMessages.clientHeight;
+  const distanceFromBottom = previousScrollHeight - previousClientHeight - previousScrollTop;
+  const wasNearBottom = distanceFromBottom <= 72;
+
   nodes.chatMessages.innerHTML = "";
   const visibleMessages = state.pendingChatPlaceholder
     ? [...state.chatMessages, state.pendingChatPlaceholder]
@@ -649,6 +654,7 @@ function renderChatMessages() {
       ? "可以直接追问算法细节、关键实验、工程实现，系统会优先引用原文上下文。"
       : "先选择一篇论文，再开始提问。";
     nodes.chatMessages.appendChild(empty);
+    nodes.chatMessages.scrollTop = 0;
     return;
   }
 
@@ -681,7 +687,15 @@ function renderChatMessages() {
     }
     nodes.chatMessages.appendChild(row);
   });
-  nodes.chatMessages.scrollTop = nodes.chatMessages.scrollHeight;
+
+  if (wasNearBottom || state.chatPending) {
+    nodes.chatMessages.scrollTop = nodes.chatMessages.scrollHeight;
+    return;
+  }
+
+  const nextScrollHeight = nodes.chatMessages.scrollHeight;
+  const delta = nextScrollHeight - previousScrollHeight;
+  nodes.chatMessages.scrollTop = Math.max(0, previousScrollTop + delta);
 }
 
 function buildChatMessageMeta(message) {
@@ -1705,13 +1719,15 @@ nodes.chatArticleSelect.addEventListener("change", (event) => {
   renderChatView();
 });
 
-nodes.chatModelSelect.addEventListener("change", (event) => {
-  state.chatModelKey = event.target.value;
-  resetChatSession();
-  void loadPersistedChatSession();
-  renderChatSidebar();
-  renderChatView();
-});
+if (nodes.chatModelSelect) {
+  nodes.chatModelSelect.addEventListener("change", (event) => {
+    state.chatModelKey = event.target.value;
+    resetChatSession();
+    void loadPersistedChatSession();
+    renderChatSidebar();
+    renderChatView();
+  });
+}
 
 nodes.chatResetButton.addEventListener("click", () => {
   startFreshChatSession();

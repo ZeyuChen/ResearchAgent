@@ -720,8 +720,8 @@ body.layout-resizing {
   overflow: hidden;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
 }
 
 .chat-panel-head {
@@ -739,14 +739,13 @@ body.layout-resizing {
 }
 
 .chat-linked-row {
-  display: grid;
-  gap: 8px;
+  display: block;
 }
 
 .chat-compact-select {
   width: 100%;
   min-width: 0;
-  height: 36px;
+  height: 34px;
   padding: 0 12px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 12px;
@@ -1064,8 +1063,11 @@ body.layout-resizing {
 }
 
 .chat-messages.sidebar {
-  gap: 10px;
-  padding-right: 2px;
+  gap: 12px;
+  padding: 2px 6px 8px 2px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-bottom: 18px;
 }
 
 .chat-empty {
@@ -1088,6 +1090,7 @@ body.layout-resizing {
 
 .chat-message {
   display: flex;
+  min-width: 0;
 }
 
 .chat-message.user {
@@ -1110,12 +1113,13 @@ body.layout-resizing {
   padding: 14px 16px;
   background: var(--surface-soft);
   color: var(--text);
+  overflow: hidden;
 }
 
 .chat-messages.sidebar .chat-bubble {
   max-width: 100%;
   width: 100%;
-  padding: 10px 11px;
+  padding: 12px 12px;
   border-radius: 14px;
 }
 
@@ -1246,16 +1250,19 @@ body.layout-resizing {
 
 .chat-composer.sidebar {
   gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(17, 24, 39, 0.06);
+  background: linear-gradient(180deg, rgba(247, 247, 248, 0) 0%, rgba(247, 247, 248, 0.92) 22%, rgba(247, 247, 248, 1) 100%);
 }
 
 .chat-shortcut-hint {
   color: var(--muted);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   line-height: 1.4;
 }
 
 .chat-composer.sidebar .chat-shortcut-hint {
-  font-size: 0.69rem;
+  font-size: 0.67rem;
 }
 
 .chat-composer textarea {
@@ -1273,8 +1280,8 @@ body.layout-resizing {
 
 .chat-input-shell {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px 10px 8px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 20px;
   background: var(--surface);
@@ -1404,7 +1411,7 @@ body.layout-resizing {
 }
 
 .sidebar-chat-shell .sidebar-note {
-  font-size: 0.72rem;
+  font-size: 0.69rem;
   line-height: 1.45;
 }
 
