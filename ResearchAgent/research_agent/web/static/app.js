@@ -352,7 +352,7 @@ function renderArticleList() {
     const timeMarkup = buildLibraryTimeMarkup(article);
     button.innerHTML = `
       <div class="card-title">${escapeHtml(article.title || "Untitled")}</div>
-      <div class="card-excerpt">${escapeHtml((article.summary || "").slice(0, 168))}</div>
+      <div class="card-excerpt">${escapeHtml(article.summary || "")}</div>
       ${tagsMarkup ? `<div class="card-tags">${tagsMarkup}</div>` : ""}
       ${timeMarkup}
       <div class="card-mini">
