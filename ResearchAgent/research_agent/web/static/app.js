@@ -18,6 +18,7 @@ const state = {
   chatPending: false,
   chatCache: null,
   pendingChatPlaceholder: null,
+  chatForceNewSession: false,
 };
 
 const nodes = {
@@ -82,6 +83,7 @@ const nodes = {
 
 async function bootstrap() {
   await Promise.all([refreshLibrary(), refreshChatOptions()]);
+  await loadPersistedChatSession();
   renderWorkspace();
 }
 
@@ -135,6 +137,9 @@ function renderWorkspace() {
 function setWorkspace(mode) {
   state.workspace = mode === "chat" ? "chat" : "library";
   renderWorkspace();
+  if (state.workspace === "chat") {
+    void loadPersistedChatSession();
+  }
 }
 
 function renderFilters() {
@@ -417,6 +422,7 @@ function renderChatModelOptions() {
     button.addEventListener("click", () => {
       state.chatModelKey = model.key;
       resetChatSession();
+      void loadPersistedChatSession();
       renderChatSidebar();
       renderChatView();
     });
@@ -553,6 +559,41 @@ function resetChatSession() {
   state.chatMessages = [];
   state.chatCache = null;
   state.pendingChatPlaceholder = null;
+  state.chatForceNewSession = false;
+}
+
+function startFreshChatSession() {
+  resetChatSession();
+  state.chatForceNewSession = true;
+}
+
+async function loadPersistedChatSession() {
+  const article = getChatArticle();
+  if (!article) {
+    resetChatSession();
+    renderChatView();
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      article_id: article.article_id,
+      model: state.chatModelKey,
+    });
+    const response = await fetch(`/api/chat/session?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.detail || "会话加载失败");
+    }
+    state.chatSessionId = payload.session_id || null;
+    state.chatMessages = payload.messages || [];
+    state.chatCache = payload.cache || null;
+    state.pendingChatPlaceholder = null;
+    state.chatForceNewSession = false;
+  } catch (error) {
+    resetChatSession();
+  }
+  renderChatView();
 }
 
 async function sendChatMessage() {
@@ -569,6 +610,8 @@ async function sendChatMessage() {
 
   const previousMessages = [...state.chatMessages];
   const previousSessionId = state.chatSessionId;
+  const previousCache = state.chatCache;
+  const previousForceNewSession = state.chatForceNewSession;
   const draft = message;
   state.chatPending = true;
   state.pendingChatPlaceholder = {
@@ -595,6 +638,7 @@ async function sendChatMessage() {
         message: draft,
         model: state.chatModelKey,
         session_id: state.chatSessionId,
+        new_session: state.chatForceNewSession,
       }),
     });
     const payload = await response.json();
@@ -605,10 +649,13 @@ async function sendChatMessage() {
     state.chatMessages = payload.messages || [];
     state.chatCache = payload.cache || null;
     state.pendingChatPlaceholder = null;
+    state.chatForceNewSession = false;
   } catch (error) {
     state.chatMessages = previousMessages;
     state.chatSessionId = previousSessionId;
+    state.chatCache = previousCache;
     state.pendingChatPlaceholder = null;
+    state.chatForceNewSession = previousForceNewSession;
     nodes.chatInput.value = draft;
     nodes.chatStatus.textContent = error.message || "聊天请求失败";
   } finally {
@@ -972,17 +1019,18 @@ nodes.viewToggle.addEventListener("click", (event) => {
 nodes.chatArticleSelect.addEventListener("change", (event) => {
   state.chatArticleId = event.target.value;
   resetChatSession();
+  void loadPersistedChatSession();
   renderChatSidebar();
   renderChatView();
 });
 
 nodes.newChatButton.addEventListener("click", () => {
-  resetChatSession();
+  startFreshChatSession();
   renderChatView();
 });
 
 nodes.chatResetButton.addEventListener("click", () => {
-  resetChatSession();
+  startFreshChatSession();
   renderChatView();
 });
 

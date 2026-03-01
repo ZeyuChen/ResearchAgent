@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import uuid
@@ -58,6 +59,11 @@ class ChatService:
         self._lock = threading.Lock()
         self._sessions: dict[str, ChatSession] = {}
         self._contexts: dict[tuple[str, str], ChatContextHandle] = {}
+        self._latest_session_by_key: dict[tuple[str, str], str] = {}
+        self._state_dir = self.storage_manager.data_dir / "_system"
+        self._state_path = self._state_dir / "chat_state.json"
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._load_state()
 
     def available(self) -> bool:
         return self.llm_processor.available
@@ -83,6 +89,28 @@ class ChatService:
     def default_model_key(self) -> str:
         return "flash"
 
+    def get_session(self, *, article_id: str, model_key: str, session_id: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            session = None
+            if session_id:
+                candidate = self._sessions.get(session_id)
+                if candidate and candidate.article_id == article_id and candidate.model_key == model_key:
+                    session = candidate
+            if session is None:
+                latest_session_id = self._latest_session_by_key.get((article_id, model_key))
+                if latest_session_id:
+                    session = self._sessions.get(latest_session_id)
+            if session is None:
+                return {
+                    "session_id": "",
+                    "article_id": article_id,
+                    "model_key": model_key,
+                    "messages": [],
+                    "cache": {"status": "inline", "kind": "inline"},
+                    "updated_at": "",
+                }
+            return self._serialize_session(session)
+
     def send_message(
         self,
         *,
@@ -91,6 +119,7 @@ class ChatService:
         message: str,
         model_key: str,
         session_id: str | None,
+        force_new_session: bool = False,
     ) -> dict[str, Any]:
         if not self.available():
             raise RuntimeError("Gemini API is not configured")
@@ -106,10 +135,12 @@ class ChatService:
             model_key=model_key,
             model_name=model_name,
             session_id=session_id,
+            force_new_session=force_new_session,
         )
         context = self._ensure_context(article=article, model_name=model_name)
         if session.context.cache_name != context.cache_name or session.context.cache_status != context.cache_status:
             session.context = context
+            self._persist_state()
 
         prompt = self._build_turn_prompt(
             article=article,
@@ -118,7 +149,16 @@ class ChatService:
             cache_kind=context.cache_kind,
             include_inline_context=context.cache_status == "inline",
         )
-        response = self._generate_chat_response(prompt=prompt, context=context, model_name=model_name)
+        try:
+            response = self._generate_chat_response(prompt=prompt, context=context, model_name=model_name)
+        except Exception as exc:
+            if not context.cache_name:
+                raise
+            LOGGER.warning("Gemini cached chat call failed for %s; rebuilding context: %s", article_id, exc)
+            context = self._rebuild_context(article=article, model_name=model_name)
+            session.context = context
+            self._persist_state()
+            response = self._generate_chat_response(prompt=prompt, context=context, model_name=model_name)
         reply = (response.text or "").strip() or "我没有拿到有效回复，请换一个问法再试一次。"
         usage = self.llm_processor.extract_usage(response, model_name)
 
@@ -126,6 +166,7 @@ class ChatService:
         session.messages.append({"role": "user", "text": clean_message, "created_at": now})
         session.messages.append({"role": "assistant", "text": reply, "created_at": now, "usage": usage})
         session.updated_at = now
+        self._persist_state()
 
         return self._serialize_session(session)
 
@@ -137,12 +178,21 @@ class ChatService:
         model_key: str,
         model_name: str,
         session_id: str | None,
+        force_new_session: bool,
     ) -> ChatSession:
         with self._lock:
             if session_id:
                 existing = self._sessions.get(session_id)
                 if existing and existing.article_id == article_id and existing.model_name == model_name:
                     return existing
+
+            if not force_new_session:
+                latest_session_id = self._latest_session_by_key.get((article_id, model_key))
+                if latest_session_id:
+                    existing = self._sessions.get(latest_session_id)
+                    if existing and existing.model_name == model_name:
+                        existing.title = title
+                        return existing
 
             now = datetime.now().isoformat(timespec="seconds")
             new_session = ChatSession(
@@ -155,6 +205,8 @@ class ChatService:
                 updated_at=now,
             )
             self._sessions[new_session.session_id] = new_session
+            self._latest_session_by_key[(article_id, model_key)] = new_session.session_id
+            self._persist_state_locked()
             return new_session
 
     def _ensure_context(self, *, article: dict, model_name: str) -> ChatContextHandle:
@@ -167,6 +219,15 @@ class ChatService:
         context = self._build_context(article=article, model_name=model_name)
         with self._lock:
             self._contexts[cache_key] = context
+            self._persist_state_locked()
+        return context
+
+    def _rebuild_context(self, *, article: dict, model_name: str) -> ChatContextHandle:
+        cache_key = (article.get("article_id", ""), model_name)
+        context = self._build_context(article=article, model_name=model_name)
+        with self._lock:
+            self._contexts[cache_key] = context
+            self._persist_state_locked()
         return context
 
     def _build_context(self, *, article: dict, model_name: str) -> ChatContextHandle:
@@ -340,3 +401,80 @@ class ChatService:
         if not article_path:
             return None
         return (self.storage_manager.data_dir / article_path).parent
+
+    def _load_state(self) -> None:
+        if not self._state_path.exists():
+            return
+        try:
+            payload = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            LOGGER.warning("Failed to read chat persistence state: %s", exc)
+            return
+
+        sessions = payload.get("sessions", [])
+        for entry in sessions:
+            try:
+                context_payload = entry.get("context", {})
+                session = ChatSession(
+                    session_id=str(entry.get("session_id", "")),
+                    article_id=str(entry.get("article_id", "")),
+                    model_key=str(entry.get("model_key", "flash")),
+                    model_name=str(entry.get("model_name", self.settings.chat_default_model)),
+                    title=str(entry.get("title", "Untitled")),
+                    created_at=str(entry.get("created_at", "")),
+                    updated_at=str(entry.get("updated_at", "")),
+                    messages=list(entry.get("messages", [])),
+                    context=ChatContextHandle(
+                        cache_name=str(context_payload.get("cache_name", "")),
+                        cache_kind=str(context_payload.get("cache_kind", "inline")),
+                        cache_status=str(context_payload.get("cache_status", "inline")),
+                    ),
+                )
+            except Exception as exc:
+                LOGGER.warning("Skipping invalid chat session state entry: %s", exc)
+                continue
+            if not session.session_id:
+                continue
+            self._sessions[session.session_id] = session
+            self._latest_session_by_key[(session.article_id, session.model_key)] = session.session_id
+            self._contexts[(session.article_id, session.model_name)] = ChatContextHandle(
+                cache_name=session.context.cache_name,
+                cache_kind=session.context.cache_kind,
+                cache_status=session.context.cache_status,
+            )
+
+        for composite_key, session_id in payload.get("latest_session_by_key", {}).items():
+            article_id, _, model_key = str(composite_key).partition("::")
+            if article_id and model_key and session_id in self._sessions:
+                self._latest_session_by_key[(article_id, model_key)] = session_id
+
+    def _persist_state(self) -> None:
+        with self._lock:
+            self._persist_state_locked()
+
+    def _persist_state_locked(self) -> None:
+        snapshot = {
+            "sessions": [
+                {
+                    "session_id": session.session_id,
+                    "article_id": session.article_id,
+                    "model_key": session.model_key,
+                    "model_name": session.model_name,
+                    "title": session.title,
+                    "created_at": session.created_at,
+                    "updated_at": session.updated_at,
+                    "messages": session.messages,
+                    "context": {
+                        "cache_name": session.context.cache_name,
+                        "cache_kind": session.context.cache_kind,
+                        "cache_status": session.context.cache_status,
+                    },
+                }
+                for session in sorted(self._sessions.values(), key=lambda row: row.updated_at)
+            ],
+            "latest_session_by_key": {
+                f"{article_id}::{model_key}": session_id
+                for (article_id, model_key), session_id in self._latest_session_by_key.items()
+            },
+        }
+        self._state_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2), encoding="utf-8")

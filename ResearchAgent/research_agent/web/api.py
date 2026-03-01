@@ -33,6 +33,7 @@ class ChatMessageRequest(BaseModel):
     message: str
     model: str = "flash"
     session_id: str | None = None
+    new_session: bool = False
 
 
 def build_display_tags(article: dict) -> list[str]:
@@ -171,11 +172,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 message=payload.message,
                 model_key=payload.model,
                 session_id=payload.session_id,
+                force_new_session=payload.new_session,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.get("/api/chat/session")
+    async def chat_session(article_id: str, model: str = "flash", session_id: str | None = None) -> dict:
+        return chat_service.get_session(article_id=article_id, model_key=model, session_id=session_id)
 
     def start_job(job_kind: str, worker, filename: str = "") -> dict:
         job = job_manager.create_job(job_kind, filename=filename)
