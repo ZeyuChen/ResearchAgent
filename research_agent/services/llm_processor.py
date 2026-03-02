@@ -454,7 +454,7 @@ class LLMProcessor:
                 "required": ["chunks"],
             },
         )
-        return self._extract_json_payload(response.text or ""), self.extract_usage(response, self.settings.gemini_model)
+        return self._extract_structured_response_payload(response), self.extract_usage(response, self.settings.gemini_model)
 
     def _request_pdf_translation_chunk(
         self,
@@ -488,6 +488,7 @@ class LLMProcessor:
             "  ]\n"
             "}\n\n"
             "要求：\n"
+            "- heading 必须与目标章节完全一致，不要改写成“核心摘要”或其他标题；\n"
             "- segments 按原文出现顺序排列；\n"
             "- original 要保留对应的英文原句或英文原段核心文本，用于防止遗漏；\n"
             "- translation 要尽量完整保留关键定义、公式含义、实验设置、并列要点与限制条件；\n"
@@ -516,16 +517,16 @@ class LLMProcessor:
                                     "original": {"type": "string"},
                                     "translation": {"type": "string"},
                                 },
-                                "required": ["translation"],
+                                "required": ["original", "translation"],
                             },
                         },
                     },
                     "required": ["heading", "segments"],
                 },
             )
-            payload = self._extract_json_payload(response.text or "")
+            payload = self._extract_structured_response_payload(response)
             normalized = self._normalize_pdf_translation_chunk(payload, fallback_chunk=chunk)
-            if normalized["segments"]:
+            if self._chunk_translation_is_usable(normalized, fallback_chunk=chunk):
                 return normalized, self.extract_usage(response, self.settings.gemini_model)
         except Exception as exc:
             LOGGER.warning("Gemini structured PDF chunk translation failed for %s [%s]: %s", item.title, chunk["heading"], exc)
@@ -552,7 +553,7 @@ class LLMProcessor:
             "segments": [
                 {
                     "original": "",
-                    "translation": (response.text or "").strip(),
+                    "translation": self._sanitize_fallback_chunk_translation(response.text or ""),
                 }
             ],
         }
@@ -745,7 +746,7 @@ class LLMProcessor:
         if bool(chunk.get("skip_translation")):
             return []
 
-        numbered_parts = re.findall(r"\d+(?:\.\d+)*\s+[^&]+?(?=(?:\s+&\s+\d+(?:\.\d+)*\s+)|$)", heading)
+        numbered_parts = re.findall(r"\d+(?:\.\d+)*\s+[^,&]+", heading)
         if numbered_parts and len(numbered_parts) >= 2:
             parts = [part.strip(" ;,") for part in numbered_parts]
         elif " & " in heading:
@@ -788,9 +789,6 @@ class LLMProcessor:
                 "segments": [],
             }
 
-        payload_heading = " ".join(str(payload.get("heading", heading)).split()).strip()
-        if payload_heading:
-            heading = payload_heading
         payload_page_refs = LLMProcessor._normalize_page_refs(payload.get("page_refs"))
         if payload_page_refs:
             page_refs = payload_page_refs
@@ -802,7 +800,7 @@ class LLMProcessor:
                 if not isinstance(entry, dict):
                     continue
                 original = " ".join(str(entry.get("original", "")).split()).strip()
-                translation = str(entry.get("translation", "")).strip()
+                translation = LLMProcessor._sanitize_fallback_chunk_translation(str(entry.get("translation", "")))
                 if not translation:
                     continue
                 segments.append(
@@ -817,6 +815,77 @@ class LLMProcessor:
             "page_refs": page_refs,
             "segments": segments,
         }
+
+    @staticmethod
+    def _chunk_translation_is_usable(
+        chunk_payload: dict[str, object],
+        *,
+        fallback_chunk: dict[str, object],
+    ) -> bool:
+        segments = chunk_payload.get("segments", [])
+        if not isinstance(segments, list) or not segments:
+            return False
+
+        joined_translation = "\n".join(
+            str(segment.get("translation", "")).strip()
+            for segment in segments
+            if isinstance(segment, dict) and str(segment.get("translation", "")).strip()
+        ).strip()
+        if not joined_translation:
+            return False
+
+        suspicious_markers = ("## 核心摘要", "# 核心摘要", "## 第1节", "## Abstract", "---")
+        if any(marker in joined_translation[:240] for marker in suspicious_markers):
+            return False
+
+        if len(segments) == 1:
+            only_segment = segments[0]
+            if isinstance(only_segment, dict):
+                original = str(only_segment.get("original", "")).strip()
+                translation = str(only_segment.get("translation", "")).strip()
+                if not original and translation.startswith("#"):
+                    return False
+                if original:
+                    compact_original = " ".join(original.split())
+                    compact_translation = " ".join(translation.split())
+                    if len(compact_translation) < max(24, int(len(compact_original) * 0.22)):
+                        return False
+
+        if len(segments) >= 2:
+            non_empty_originals = sum(
+                1
+                for segment in segments
+                if isinstance(segment, dict) and str(segment.get("original", "")).strip()
+            )
+            if non_empty_originals == 0:
+                return False
+
+        heading = str(fallback_chunk.get("heading", "")).strip().lower()
+        if heading and "abstract" in heading and len(segments) < 3:
+            return False
+
+        return True
+
+    @staticmethod
+    def _sanitize_fallback_chunk_translation(text: str) -> str:
+        lines = [line.rstrip() for line in str(text).splitlines()]
+        cleaned_lines: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                cleaned_lines.append("")
+                continue
+            if stripped in {"---", "***"}:
+                continue
+            if re.fullmatch(r"#{1,6}\s+.*", stripped):
+                continue
+            if stripped in {"核心摘要", "逐节忠实转述", "关键图表 / 公式 / 表格解读"}:
+                continue
+            cleaned_lines.append(line)
+
+        cleaned_text = "\n".join(cleaned_lines).strip()
+        cleaned_text = re.sub(r"\n{3,}", "\n\n", cleaned_text)
+        return cleaned_text
 
     @staticmethod
     def _normalize_page_refs(value: object) -> list[str]:
@@ -855,6 +924,13 @@ class LLMProcessor:
                 if decoded is not None:
                     return decoded
         return None
+
+    @staticmethod
+    def _extract_structured_response_payload(response: types.GenerateContentResponse) -> object:
+        parsed = getattr(response, "parsed", None)
+        if parsed is not None:
+            return parsed
+        return LLMProcessor._extract_json_payload(response.text or "")
 
     @staticmethod
     def _stitch_chunked_pdf_sections(translated_chunks: list[dict[str, object]]) -> str:

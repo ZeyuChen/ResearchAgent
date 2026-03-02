@@ -105,6 +105,12 @@ def test_extract_json_payload_supports_wrapped_dict_and_list() -> None:
     assert LLMProcessor._extract_json_payload(array_payload) == [{"heading": "2 Method"}]
 
 
+def test_extract_structured_response_payload_prefers_parsed() -> None:
+    response = SimpleNamespace(parsed={"chunks": [{"heading": "1 Intro"}]}, text="")
+
+    assert LLMProcessor._extract_structured_response_payload(response) == {"chunks": [{"heading": "1 Intro"}]}
+
+
 def test_normalize_pdf_translation_plan_deduplicates_and_limits() -> None:
     payload = {
         "chunks": [
@@ -157,6 +163,60 @@ def test_expand_pdf_translation_plan_splits_coarse_joined_headings() -> None:
         "2.3 Mid-Training",
     ]
     assert all("当前仅处理其中的" in chunk["translation_scope"] for chunk in expanded)
+
+
+def test_chunk_translation_is_usable_rejects_summary_like_chunk() -> None:
+    chunk = {
+        "heading": "Abstract",
+        "page_refs": ["P1"],
+        "translation_scope": "Translate abstract",
+        "skip_translation": False,
+    }
+    payload = {
+        "heading": "核心摘要",
+        "page_refs": ["P1"],
+        "segments": [
+            {
+                "original": "",
+                "translation": "## 核心摘要\n\n这篇论文主要介绍了 GLM-5。",
+            }
+        ],
+    }
+
+    normalized = LLMProcessor._normalize_pdf_translation_chunk(payload, fallback_chunk=chunk)
+
+    assert normalized["heading"] == "Abstract"
+    assert not LLMProcessor._chunk_translation_is_usable(normalized, fallback_chunk=chunk)
+
+
+def test_chunk_translation_is_usable_accepts_structured_parallel_segments() -> None:
+    chunk = {
+        "heading": "1 Introduction",
+        "page_refs": ["P1", "P2"],
+        "translation_scope": "Translate introduction",
+        "skip_translation": False,
+    }
+    payload = {
+        "heading": "1 Introduction",
+        "page_refs": ["P1", "P2"],
+        "segments": [
+            {"original": "Sentence one.", "translation": "第一句。"},
+            {"original": "Sentence two.", "translation": "第二句。"},
+            {"original": "Sentence three.", "translation": "第三句。"},
+        ],
+    }
+
+    normalized = LLMProcessor._normalize_pdf_translation_chunk(payload, fallback_chunk=chunk)
+
+    assert LLMProcessor._chunk_translation_is_usable(normalized, fallback_chunk=chunk)
+
+
+def test_sanitize_fallback_chunk_translation_removes_heading_noise() -> None:
+    text = "## 核心摘要\n\n---\n\n第一段。\n\n### 小节标题\n\n第二段。"
+
+    cleaned = LLMProcessor._sanitize_fallback_chunk_translation(text)
+
+    assert cleaned == "第一段。\n\n第二段。"
 
 
 def test_stitch_chunked_pdf_article_combines_sections_naturally() -> None:
