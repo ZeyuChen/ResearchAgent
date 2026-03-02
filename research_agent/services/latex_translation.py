@@ -134,10 +134,15 @@ class LatexTranslationService:
         self.lualatex_path = shutil.which("lualatex")
         self.bibtex_path = shutil.which("bibtex")
         self.kpsewhich_path = shutil.which("kpsewhich")
+        self.gemini_cli_path = shutil.which("gemini")
 
     @property
     def available(self) -> bool:
         return self.llm_processor.available
+
+    @property
+    def cli_available(self) -> bool:
+        return bool(self.gemini_cli_path)
 
     def translate_article(
         self,
@@ -263,6 +268,431 @@ class LatexTranslationService:
         if not updated_article:
             raise RuntimeError("Translated article metadata could not be reloaded")
         return updated_article
+
+    def translate_article_with_gemini_cli(
+        self,
+        article_id: str,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict:
+        article = self.storage_manager.load_article(article_id)
+        if not article:
+            raise ValueError("Article not found")
+
+        arxiv_id = self._infer_arxiv_id(article)
+        if not arxiv_id:
+            raise ValueError("Only arXiv-backed articles support source-level full-text translation")
+        if not self.gemini_cli_path:
+            raise RuntimeError("Local Gemini CLI is not installed or not found in PATH")
+
+        item_dir = self._resolve_item_dir(article)
+        if item_dir is None:
+            raise ValueError("Article source directory is unavailable")
+
+        self._notify(progress_callback, 8, "正在准备 Gemini CLI 全文翻译工作区。")
+        work_dir = item_dir / "fulltext-translation"
+        source_archive = work_dir / "source.tar.gz"
+        source_dir = work_dir / "source"
+        translated_dir = work_dir / "translated"
+        build_dir = work_dir / "build"
+        translated_pdf = work_dir / "translated.pdf"
+        fallback_pdf = work_dir / "translated-fallback.pdf"
+        compile_log_path = work_dir / "compile.log"
+        manifest_path = work_dir / "manifest.json"
+        cli_log_path = work_dir / "gemini-cli.log"
+        cli_prompt_path = work_dir / "gemini-cli-prompt.txt"
+
+        work_dir.mkdir(parents=True, exist_ok=True)
+        self._reset_translation_workspace(translated_dir, build_dir, translated_pdf, fallback_pdf, compile_log_path)
+        for file_path in (cli_log_path, cli_prompt_path):
+            if file_path.exists():
+                file_path.unlink()
+
+        if not source_archive.exists():
+            self._notify(progress_callback, 14, "正在从 arXiv 下载 LaTeX 源码。")
+            source_archive.write_bytes(self._download_source(arxiv_id))
+        if not source_dir.exists() or not any(source_dir.iterdir()):
+            self._notify(progress_callback, 20, "正在解压 LaTeX 源码包。")
+            self._extract_tarball(source_archive, source_dir)
+
+        root_tex = self._detect_root_tex(source_dir)
+        if root_tex is None:
+            raise RuntimeError("Unable to locate a compilable LaTeX root file in arXiv source")
+
+        shutil.copytree(source_dir, translated_dir, dirs_exist_ok=True)
+        translated_root = translated_dir / root_tex.relative_to(source_dir)
+        tex_files = sorted(translated_dir.rglob("*.tex"))
+        if not tex_files:
+            raise RuntimeError("No .tex files found after extracting arXiv source")
+
+        prompt_log_parts: list[str] = [self._build_gemini_cli_fulltext_prompt(root_tex.relative_to(source_dir))]
+        cli_return_codes: list[int] = []
+        cli_warnings: list[str] = []
+        translatable_files: list[Path] = []
+
+        for tex_path in tex_files:
+            original_text = tex_path.read_text(encoding="utf-8", errors="ignore")
+            stripped_text = self._strip_tex_comments(original_text)
+            if stripped_text != original_text:
+                tex_path.write_text(stripped_text, encoding="utf-8")
+            if self._looks_like_bibliography_file(tex_path, stripped_text):
+                continue
+            translatable_files.append(tex_path)
+
+        total_files = len(translatable_files)
+        self._notify(progress_callback, 24, f"Gemini CLI 将按文件逐个翻译，共 {total_files} 个 TeX 文件。")
+
+        for index, tex_path in enumerate(translatable_files, start=1):
+            rel_path = tex_path.relative_to(translated_dir)
+            progress = 26 + int((index / max(total_files, 1)) * 40)
+            self._notify(progress_callback, progress, f"Gemini CLI 正在翻译 {rel_path.as_posix()}。")
+            source_path = source_dir / rel_path
+            source_text = source_path.read_text(encoding="utf-8", errors="ignore") if source_path.exists() else tex_path.read_text(encoding="utf-8", errors="ignore")
+            stripped_source = self._strip_tex_comments(source_text)
+            tex_path.write_text(stripped_source, encoding="utf-8")
+            result = self._translate_tex_file_with_gemini_cli(
+                tex_path=tex_path,
+                translated_dir=translated_dir,
+                source_text=stripped_source,
+                is_root=source_path == root_tex,
+                root_tex_relpath=root_tex.relative_to(source_dir),
+                log_path=cli_log_path,
+                prompt_log_parts=prompt_log_parts,
+                progress_callback=progress_callback,
+            )
+            cli_return_codes.append(int(result["returncode"]))
+            warning = str(result["warning"])
+            if warning:
+                cli_warnings.append(warning)
+
+        cli_prompt_path.write_text("\n\n".join(prompt_log_parts).strip() + "\n", encoding="utf-8")
+
+        self._notify(progress_callback, 68, "Gemini CLI 已完成逐文件翻译，正在进行兼容清洗与编译校验。")
+        self._inject_chinese_support(translated_root)
+        compatibility_notes = self._apply_compile_compatibility_cleaning(translated_dir, translated_root)
+
+        compile_result = self._compile_project(translated_root, build_dir, compile_log_path)
+        repair_attempts = 0
+        while not compile_result.get("success") and repair_attempts < 2:
+            repair_attempts += 1
+            self._notify(
+                progress_callback,
+                74 + repair_attempts * 4,
+                f"Gemini CLI 正在根据编译日志尝试第 {repair_attempts} 次定向修复。",
+            )
+            repair_result = self._repair_translation_with_gemini_cli(
+                translated_dir=translated_dir,
+                root_tex=translated_root,
+                compile_log_path=compile_log_path,
+                prompt_log_parts=prompt_log_parts,
+                log_path=cli_log_path,
+                progress_callback=progress_callback,
+            )
+            cli_return_codes.append(int(repair_result["returncode"]))
+            warning = str(repair_result["warning"])
+            if warning:
+                cli_warnings.append(warning)
+            compatibility_notes.extend(self._apply_compile_compatibility_cleaning(translated_dir, translated_root))
+            compile_result = self._compile_project(translated_root, build_dir, compile_log_path)
+
+        cli_prompt_path.write_text("\n\n".join(prompt_log_parts).strip() + "\n", encoding="utf-8")
+
+        output_pdf_path = ""
+        fallback_used = False
+        compiler_name = compile_result.get("compiler", "")
+        compile_error = compile_result.get("error", "")
+
+        if compile_result.get("success") and compile_result.get("pdf_path"):
+            shutil.copyfile(Path(compile_result["pdf_path"]), translated_pdf)
+            output_pdf_path = translated_pdf.relative_to(self.settings.data_dir).as_posix()
+            self._notify(progress_callback, 90, f"中文 PDF 编译成功，使用 {compiler_name}。")
+        else:
+            self._notify(progress_callback, 84, "CLI 翻译后的 LaTeX 编译失败，正在生成回退 PDF。")
+            fallback_path = self._build_fallback_pdf(translated_dir, fallback_pdf, article)
+            if fallback_path:
+                fallback_used = True
+                output_pdf_path = fallback_path.relative_to(self.settings.data_dir).as_posix()
+                if not compiler_name:
+                    compiler_name = "fallback-pdf"
+            self._notify(progress_callback, 92, "已生成可阅读的回退 PDF。")
+
+        translated_count, kept_original_count = self._count_changed_tex_files(source_dir, translated_dir)
+        cli_return_code = max(cli_return_codes) if cli_return_codes else 0
+        cli_warning = "；".join(dict.fromkeys(warning for warning in cli_warnings if warning))
+        manifest = {
+            "available": True,
+            "status": "completed" if output_pdf_path else "failed",
+            "article_id": article_id,
+            "arxiv_id": arxiv_id,
+            "root_tex": root_tex.relative_to(source_dir).as_posix(),
+            "translated_pdf_path": output_pdf_path,
+            "translated_tex_dir": translated_dir.relative_to(self.settings.data_dir).as_posix(),
+            "compile_log_path": compile_log_path.relative_to(self.settings.data_dir).as_posix() if compile_log_path.exists() else "",
+            "compiler": compiler_name,
+            "fallback_used": fallback_used,
+            "translated_files": translated_count,
+            "kept_original_files": kept_original_count,
+            "compatibility_notes": compatibility_notes,
+            "backend": "gemini-cli",
+            "cli_log_path": cli_log_path.relative_to(self.settings.data_dir).as_posix() if cli_log_path.exists() else "",
+            "cli_prompt_path": cli_prompt_path.relative_to(self.settings.data_dir).as_posix(),
+            "cli_returncode": cli_return_code,
+            "cli_warning": cli_warning,
+            "error": compile_error,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.storage_manager.update_metadata(
+            item_dir / "metadata.json",
+            {
+                "fulltext_translation": manifest,
+                "updated_at": manifest["updated_at"],
+            },
+        )
+        self._notify(progress_callback, 96, "Gemini CLI 全文翻译完成，正在刷新文章数据。")
+
+        updated_article = self.storage_manager.load_article(article_id)
+        if not updated_article:
+            raise RuntimeError("Translated article metadata could not be reloaded")
+        return updated_article
+
+    @staticmethod
+    def _build_gemini_cli_fulltext_prompt(root_tex_relpath: Path) -> str:
+        root_name = root_tex_relpath.as_posix()
+        return (
+            "Gemini CLI 全文中译模式：按文件逐个处理这个已解压的 arXiv LaTeX 工程。\n"
+            f"主入口文件：`{root_name}`。\n"
+            "处理原则：\n"
+            "1. 每次只改动当前指定的 `.tex` 文件，不要顺手批量重写其他文件。\n"
+            "2. 只翻译人类可读英文内容，必须保留 LaTeX 命令、公式、路径、图像引用、BibTeX key。\n"
+            "3. 必须完整保留 `\\label`、`\\ref`、`\\eqref`、`\\pageref`、`\\autoref`、`\\cref`、`\\Cref`、`\\hyperref`、`\\cite`、`\\citet`、`\\citep`、`\\nocite`。\n"
+            "4. `Reference / Bibliography / thebibliography` 和 `.bib` 条目不翻译。\n"
+            "5. 若遇到不确定的 LaTeX 结构，宁可保留原文，也不要破坏编译。\n"
+            "6. 所有文件翻译完成后，再根据编译日志做最小范围修复，并优先保持原版式与跳转功能。\n"
+        )
+
+    @staticmethod
+    def _build_gemini_cli_file_prompt(tex_relpath: Path, root_tex_relpath: Path) -> str:
+        file_name = tex_relpath.as_posix()
+        return (
+            "你当前位于一个已解压的 arXiv LaTeX 工程目录中。请只编辑一个文件，不要改动其他文件。\n"
+            f"主入口文件是 `{root_tex_relpath.as_posix()}`。\n"
+            f"当前只允许编辑：`{file_name}`。\n"
+            "任务：把这个文件中的人类可读英文内容尽可能完整翻译成中文，并保持其余 LaTeX 结构可编译。\n"
+            "硬性要求：\n"
+            "1. 只修改当前文件；不要改动其他 `.tex`、图片、样式文件。\n"
+            "2. 翻译标题、正文、章节标题、图注、表格标题、脚注、列表项，但不要过度简化。\n"
+            "3. 不要改动任何 LaTeX 控制序列、环境名、宏名、数学公式、路径、图片文件名、BibTeX key。\n"
+            "4. 必须逐字保留所有交叉引用和引用命令：`\\label`、`\\ref`、`\\eqref`、`\\pageref`、`\\autoref`、`\\cref`、`\\Cref`、`\\hyperref`、`\\cite`、`\\citet`、`\\citep`、`\\nocite`。\n"
+            "5. 不要翻译 bibliography、thebibliography 或引用条目本身。\n"
+            "6. 对专业术语如 Transformer、MoE、RLHF、Agent、token、benchmark、prompt、inference、alignment 优先保留英文或中英并列。\n"
+            "7. 不要输出整篇解释，只需完成编辑，然后用一句话说明是否已完成当前文件翻译。\n"
+        )
+
+    @staticmethod
+    def _build_gemini_cli_repair_prompt(root_tex_relpath: Path, log_excerpt: str) -> str:
+        return (
+            "你当前位于一个已翻译的 LaTeX 工程目录中。请根据下面的编译日志，只做最小范围修复，使工程重新可编译。\n"
+            f"主入口文件：`{root_tex_relpath.as_posix()}`。\n"
+            "要求：\n"
+            "1. 只修复造成编译失败的 LaTeX 结构问题，优先保持现有翻译内容不变。\n"
+            "2. 不要回退整篇翻译，不要大面积重写正文。\n"
+            "3. 必须保留交叉引用和 citation 命令。\n"
+            "4. 修复后请在当前目录执行 `mkdir -p build`，然后运行 xelatex；若需要 BibTeX，再运行 bibtex 并补跑 xelatex。\n"
+            "5. 最后只输出一段简短总结，说明修了哪些文件和是否成功生成 PDF。\n\n"
+            "以下是最近的编译日志摘录：\n"
+            f"{log_excerpt}"
+        )
+
+    def _translate_tex_file_with_gemini_cli(
+        self,
+        *,
+        tex_path: Path,
+        translated_dir: Path,
+        source_text: str,
+        is_root: bool,
+        root_tex_relpath: Path,
+        log_path: Path,
+        prompt_log_parts: list[str],
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, str | int | bool]:
+        rel_path = tex_path.relative_to(translated_dir)
+        last_returncode = 0
+        for attempt in range(1, 3):
+            tex_path.write_text(source_text, encoding="utf-8")
+            prompt = self._build_gemini_cli_file_prompt(rel_path, root_tex_relpath)
+            prompt_log_parts.append(f"## FILE {rel_path.as_posix()} ATTEMPT {attempt}\n{prompt}")
+            result = self._run_gemini_cli_command(
+                cwd=translated_dir,
+                prompt=prompt,
+                log_path=log_path,
+                progress_callback=progress_callback,
+                timeout=1200,
+                append=True,
+                log_header=f"== FILE {rel_path.as_posix()} ATTEMPT {attempt} ==",
+            )
+            last_returncode = int(result.get("returncode", 0))
+            updated_text = tex_path.read_text(encoding="utf-8", errors="ignore")
+            if self._translation_looks_usable(source_text, updated_text, is_root):
+                translated = updated_text != source_text
+                warning = ""
+                if last_returncode != 0:
+                    warning = f"{rel_path.as_posix()} 在第 {attempt} 次调用退出码为 {last_returncode}，但文件已保留当前可用结果。"
+                return {
+                    "returncode": last_returncode,
+                    "warning": warning,
+                    "translated": translated,
+                }
+
+            LOGGER.warning(
+                "Gemini CLI produced unusable output for %s on attempt %s; reverting and retrying",
+                rel_path.as_posix(),
+                attempt,
+            )
+
+        tex_path.write_text(source_text, encoding="utf-8")
+        return {
+            "returncode": last_returncode,
+            "warning": f"{rel_path.as_posix()} 翻译失败，已回退为原始源码。",
+            "translated": False,
+        }
+
+    def _repair_translation_with_gemini_cli(
+        self,
+        *,
+        translated_dir: Path,
+        root_tex: Path,
+        compile_log_path: Path,
+        prompt_log_parts: list[str],
+        log_path: Path,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, str | int]:
+        log_excerpt = ""
+        if compile_log_path.exists():
+            compile_log = compile_log_path.read_text(encoding="utf-8", errors="ignore")
+            log_excerpt = compile_log[-12000:]
+        prompt = self._build_gemini_cli_repair_prompt(root_tex.relative_to(translated_dir), log_excerpt)
+        prompt_log_parts.append(f"## REPAIR {datetime.now().isoformat(timespec='seconds')}\n{prompt}")
+        result = self._run_gemini_cli_command(
+            cwd=translated_dir,
+            prompt=prompt,
+            log_path=log_path,
+            progress_callback=progress_callback,
+            timeout=1200,
+            append=True,
+            log_header="== COMPILE REPAIR ==",
+        )
+        warning = ""
+        if int(result.get("returncode", 0)) != 0:
+            warning = f"编译修复阶段 Gemini CLI 以退出码 {int(result.get('returncode', 0))} 结束。"
+        return {
+            "returncode": int(result.get("returncode", 0)),
+            "warning": warning,
+        }
+
+    def _run_gemini_cli_command(
+        self,
+        *,
+        cwd: Path,
+        prompt: str,
+        log_path: Path,
+        progress_callback: ProgressCallback | None,
+        timeout: int,
+        append: bool,
+        log_header: str,
+    ) -> dict[str, str | int]:
+        if not self.gemini_cli_path:
+            raise RuntimeError("Local Gemini CLI is not installed or not found in PATH")
+
+        command = [
+            self.gemini_cli_path,
+            "-p",
+            prompt,
+            "--approval-mode",
+            "yolo",
+            "--output-format",
+            "text",
+        ]
+        if self.settings.gemini_model:
+            command.extend(["-m", self.settings.gemini_model])
+
+        env = os.environ.copy()
+        env.setdefault("NO_COLOR", "1")
+        self._notify(progress_callback, 36, "Gemini CLI 正在原地编辑 LaTeX 源码，这一步可能持续数分钟。")
+        try:
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            combined = "\n".join(
+                part
+                for part in (
+                    (exc.stdout or "").strip(),
+                    (exc.stderr or "").strip(),
+                )
+                if part
+            )
+            existing = ""
+            if append and log_path.exists():
+                existing = log_path.read_text(encoding="utf-8", errors="ignore").rstrip()
+            payload = "\n\n".join(part for part in (existing, log_header, combined, "TIMEOUT") if part)
+            log_path.write_text(payload, encoding="utf-8")
+            raise RuntimeError("Gemini CLI 执行超时，请稍后重试或缩小论文范围。") from exc
+
+        combined = "\n".join(
+            part
+            for part in (
+                (result.stdout or "").strip(),
+                (result.stderr or "").strip(),
+            )
+            if part
+        )
+        existing = ""
+        if append and log_path.exists():
+            existing = log_path.read_text(encoding="utf-8", errors="ignore").rstrip()
+        payload = "\n\n".join(part for part in (existing, log_header, combined) if part)
+        log_path.write_text(payload, encoding="utf-8")
+        return {
+            "returncode": result.returncode,
+            "summary": combined[-5000:],
+        }
+
+    def _run_gemini_cli_translation(
+        self,
+        *,
+        translated_dir: Path,
+        prompt: str,
+        log_path: Path,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict[str, str | int]:
+        return self._run_gemini_cli_command(
+            cwd=translated_dir,
+            prompt=prompt,
+            log_path=log_path,
+            progress_callback=progress_callback,
+            timeout=3600,
+            append=False,
+            log_header="== FULL PROJECT PASS ==",
+        )
+
+    @staticmethod
+    def _count_changed_tex_files(source_dir: Path, translated_dir: Path) -> tuple[int, int]:
+        translated_count = 0
+        kept_original_count = 0
+        for translated_path in sorted(translated_dir.rglob("*.tex")):
+            source_path = source_dir / translated_path.relative_to(translated_dir)
+            translated_text = translated_path.read_text(encoding="utf-8", errors="ignore")
+            source_text = source_path.read_text(encoding="utf-8", errors="ignore") if source_path.exists() else ""
+            source_text = LatexTranslationService._strip_tex_comments(source_text)
+            if translated_text != source_text:
+                translated_count += 1
+            else:
+                kept_original_count += 1
+        return translated_count, kept_original_count
 
     def _translate_tex_file(self, tex_path: Path, is_root: bool) -> tuple[str, dict, bool]:
         original = tex_path.read_text(encoding="utf-8", errors="ignore")

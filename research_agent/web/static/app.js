@@ -83,6 +83,7 @@ const nodes = {
   pdfCaption: document.getElementById("pdfCaption"),
   pdfVariantToggle: document.getElementById("pdfVariantToggle"),
   translateFulltextButton: document.getElementById("translateFulltextButton"),
+  translateFulltextCliButton: document.getElementById("translateFulltextCliButton"),
   translationStatus: document.getElementById("translationStatus"),
   ingestUrlInput: document.getElementById("ingestUrlInput"),
   ingestUrlButton: document.getElementById("ingestUrlButton"),
@@ -707,7 +708,15 @@ function renderPdfVariantControls(article, translation, hasOriginalPdf, hasTrans
     nodes.translateFulltextButton.classList.toggle("hidden", !canTranslate);
     nodes.translateFulltextButton.disabled = !canTranslate || Boolean(state.activeTranslationJobId);
     if (canTranslate) {
-      nodes.translateFulltextButton.textContent = hasTranslatedPdf ? "重新生成全文中译" : "生成全文中译";
+      nodes.translateFulltextButton.textContent = hasTranslatedPdf ? "Gemini API 重生成" : "Gemini API";
+    }
+  }
+  if (nodes.translateFulltextCliButton) {
+    const canUseCli = canTranslate && (translation.cli_available ?? true);
+    nodes.translateFulltextCliButton.classList.toggle("hidden", !canUseCli);
+    nodes.translateFulltextCliButton.disabled = !canUseCli || Boolean(state.activeTranslationJobId);
+    if (canUseCli) {
+      nodes.translateFulltextCliButton.textContent = hasTranslatedPdf ? "Gemini CLI 重生成" : "Gemini CLI";
     }
   }
 
@@ -747,9 +756,10 @@ function renderTranslationStatus(translation) {
   if (state.activeTranslationJobId) {
     message = nodes.translationStatus.dataset.pendingMessage || "全文中译任务正在运行。";
   } else if (payload.status === "completed" && translatedPdfUrl) {
+    const backend = payload.backend === "gemini-cli" ? "，后端：Gemini CLI" : payload.backend === "gemini-api" ? "，后端：Gemini API" : "";
     const compiler = payload.compiler ? `，编译链路：${payload.compiler}` : "";
     const fallback = payload.fallback_used ? "（当前为回退 PDF）" : "";
-    message = `全文中译已就绪${compiler}${fallback}`;
+    message = `全文中译已就绪${backend}${compiler}${fallback}`;
   } else if (payload.status === "failed") {
     message = payload.error || "全文中译生成失败，可稍后重试。";
   }
@@ -1522,13 +1532,16 @@ async function pollJob(jobId) {
   }
 }
 
-async function startFulltextTranslation() {
+async function startFulltextTranslation(backend = "gemini_api") {
   const articleId = state.activeArticleId;
   if (!articleId) {
     return;
   }
 
-  const response = await fetch(`/api/articles/${articleId}/fulltext-translation`, {
+  const endpoint = backend === "gemini_cli"
+    ? `/api/articles/${articleId}/fulltext-translation-cli`
+    : `/api/articles/${articleId}/fulltext-translation`;
+  const response = await fetch(endpoint, {
     method: "POST",
   });
   const payload = await readJsonPayload(response);
@@ -1539,16 +1552,18 @@ async function startFulltextTranslation() {
   state.activeTranslationJobId = payload.job_id;
   state.activeTranslationJobStartedAt = Date.now();
   if (nodes.translationStatus) {
-    nodes.translationStatus.dataset.pendingMessage = "正在处理全文中译：准备源码、翻译 LaTeX 并尝试中文编译。";
+    nodes.translationStatus.dataset.pendingMessage = backend === "gemini_cli"
+      ? "正在处理全文中译：调用本机 Gemini CLI（YOLO）编辑 LaTeX 并尝试中文编译。"
+      : "正在处理全文中译：准备源码、翻译 LaTeX 并尝试中文编译。";
   }
   const currentArticle = state.library.find((entry) => entry.article_id === articleId);
   if (currentArticle) {
     renderTranslationStatus(currentArticle.fulltext_translation || { available: true });
   }
-  await pollTranslationJob(payload.job_id, articleId);
+  await pollTranslationJob(payload.job_id, articleId, backend);
 }
 
-async function pollTranslationJob(jobId, articleId) {
+async function pollTranslationJob(jobId, articleId, backend = "gemini_api") {
   while (true) {
     const response = await fetch(`/api/ingest/jobs/${jobId}`);
     const payload = await response.json();
@@ -1578,7 +1593,7 @@ async function pollTranslationJob(jobId, articleId) {
       } else if (state.activeArticleId) {
         await loadArticle(state.activeArticleId, state.workspace === "chat" ? "chat" : "reader");
       }
-      showToast("全文中译已生成");
+      showToast(backend === "gemini_cli" ? "Gemini CLI 全文中译已生成" : "全文中译已生成");
       return;
     }
 
@@ -2534,7 +2549,17 @@ if (nodes.pdfVariantToggle) {
 if (nodes.translateFulltextButton) {
   nodes.translateFulltextButton.addEventListener("click", async () => {
     try {
-      await startFulltextTranslation();
+      await startFulltextTranslation("gemini_api");
+    } catch (error) {
+      showToast(error.message || "全文中译任务失败");
+    }
+  });
+}
+
+if (nodes.translateFulltextCliButton) {
+  nodes.translateFulltextCliButton.addEventListener("click", async () => {
+    try {
+      await startFulltextTranslation("gemini_cli");
     } catch (error) {
       showToast(error.message || "全文中译任务失败");
     }

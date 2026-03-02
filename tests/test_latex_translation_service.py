@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from research_agent.config import Settings
 from research_agent.services.latex_translation import LatexTranslationService
 from research_agent.services.llm_processor import LLMProcessor
@@ -247,3 +249,33 @@ def test_compiler_requests_rerun_detects_cross_reference_warnings() -> None:
     log_text = "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right."
 
     assert LatexTranslationService._compiler_requests_rerun(log_text)
+
+
+def test_build_gemini_cli_fulltext_prompt_mentions_reference_preservation() -> None:
+    prompt = LatexTranslationService._build_gemini_cli_fulltext_prompt(Path("0_main.tex"))
+
+    assert "0_main.tex" in prompt
+    assert "\\label" in prompt
+    assert "\\hyperref" in prompt
+    assert "按文件逐个处理" in prompt
+    assert "不要顺手批量重写其他文件" in prompt
+
+
+def test_build_gemini_cli_file_prompt_limits_scope_to_single_file() -> None:
+    prompt = LatexTranslationService._build_gemini_cli_file_prompt(Path("2_pretrain.tex"), Path("0_main.tex"))
+
+    assert "2_pretrain.tex" in prompt
+    assert "0_main.tex" in prompt
+    assert "只修改当前文件" in prompt
+    assert "\\cite" in prompt
+
+
+def test_build_gemini_cli_repair_prompt_mentions_log_and_minimal_fix() -> None:
+    prompt = LatexTranslationService._build_gemini_cli_repair_prompt(
+        Path("0_main.tex"),
+        "LaTeX Error: Missing } inserted.",
+    )
+
+    assert "0_main.tex" in prompt
+    assert "最小范围修复" in prompt
+    assert "Missing } inserted." in prompt

@@ -99,7 +99,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     async def health() -> dict:
-        return {"status": "ok", "flomo_configured": bool(app_settings.flomo_webhook_url)}
+        return {
+            "status": "ok",
+            "flomo_configured": bool(app_settings.flomo_webhook_url),
+            "gemini_cli_available": latex_translation_service.cli_available,
+        }
 
     @app.get("/api/chat/options")
     async def chat_options() -> dict:
@@ -260,6 +264,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             translated_pdf_url = f"/files/{translated_pdf_path}"
         translation_payload["translated_pdf_url"] = translated_pdf_url
         translation_payload["available"] = bool(infer_arxiv_id(article))
+        translation_payload["cli_available"] = latex_translation_service.cli_available
         return {
             **article,
             "source_files": source_files,
@@ -480,6 +485,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return start_job(
             "translation",
             lambda progress_callback: latex_translation_service.translate_article(
+                article_id,
+                progress_callback=progress_callback,
+            ),
+        )
+
+    @app.post("/api/articles/{article_id}/fulltext-translation-cli")
+    async def start_fulltext_translation_cli(article_id: str) -> dict:
+        article = storage_manager.load_article(article_id)
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        if not infer_arxiv_id(article):
+            raise HTTPException(status_code=400, detail="Only arXiv-backed articles support source-level full-text translation")
+        if not latex_translation_service.cli_available:
+            raise HTTPException(status_code=503, detail="Local Gemini CLI is not available")
+        return start_job(
+            "translation-cli",
+            lambda progress_callback: latex_translation_service.translate_article_with_gemini_cli(
                 article_id,
                 progress_callback=progress_callback,
             ),
