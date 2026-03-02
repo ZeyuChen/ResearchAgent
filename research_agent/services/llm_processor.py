@@ -268,7 +268,7 @@ class LLMProcessor:
                 item=item,
             )
             total_usage = self.merge_usage(total_usage, plan_usage)
-            chunks = self._normalize_pdf_translation_plan(plan_payload)
+            chunks = self._expand_pdf_translation_plan(self._normalize_pdf_translation_plan(plan_payload))
             if not chunks:
                 raise ValueError("Gemini did not return a usable PDF translation plan.")
 
@@ -725,6 +725,53 @@ class LLMProcessor:
                 }
             )
         return normalized
+
+    @staticmethod
+    def _expand_pdf_translation_plan(chunks: list[dict[str, object]]) -> list[dict[str, object]]:
+        expanded: list[dict[str, object]] = []
+        for chunk in chunks:
+            subdivisions = LLMProcessor._split_coarse_chunk(chunk)
+            if subdivisions:
+                expanded.extend(subdivisions)
+            else:
+                expanded.append(chunk)
+        return expanded[:24]
+
+    @staticmethod
+    def _split_coarse_chunk(chunk: dict[str, object]) -> list[dict[str, object]]:
+        heading = str(chunk.get("heading", "")).strip()
+        if not heading:
+            return []
+        if bool(chunk.get("skip_translation")):
+            return []
+
+        numbered_parts = re.findall(r"\d+(?:\.\d+)*\s+[^&]+?(?=(?:\s+&\s+\d+(?:\.\d+)*\s+)|$)", heading)
+        if numbered_parts and len(numbered_parts) >= 2:
+            parts = [part.strip(" ;,") for part in numbered_parts]
+        elif " & " in heading:
+            parts = [part.strip() for part in heading.split(" & ") if part.strip()]
+            if len(parts) < 2:
+                return []
+        else:
+            return []
+
+        translation_scope = str(chunk.get("translation_scope", "")).strip()
+        page_refs = list(chunk.get("page_refs", []))
+        split_chunks: list[dict[str, object]] = []
+        for part in parts:
+            split_chunks.append(
+                {
+                    "heading": part,
+                    "page_refs": page_refs,
+                    "translation_scope": (
+                        f"仅翻译 {part} 对应的段落、小点和图表，不要覆盖同一大块里的其他部分。"
+                        if not translation_scope
+                        else f"{translation_scope} 当前仅处理其中的 {part}。"
+                    ),
+                    "skip_translation": False,
+                }
+            )
+        return split_chunks
 
     @staticmethod
     def _normalize_pdf_translation_chunk(

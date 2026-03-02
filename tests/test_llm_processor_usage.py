@@ -132,6 +132,33 @@ def test_normalize_pdf_translation_plan_deduplicates_and_limits() -> None:
     ]
 
 
+def test_expand_pdf_translation_plan_splits_coarse_joined_headings() -> None:
+    chunks = [
+        {
+            "heading": "Abstract & Introduction",
+            "page_refs": ["P1", "P2"],
+            "translation_scope": "Translate the abstract and introduction only.",
+            "skip_translation": False,
+        },
+        {
+            "heading": "2.2 Pre-training Data & 2.3 Mid-Training",
+            "page_refs": ["P6"],
+            "translation_scope": "Translate both subsections.",
+            "skip_translation": False,
+        },
+    ]
+
+    expanded = LLMProcessor._expand_pdf_translation_plan(chunks)
+
+    assert [chunk["heading"] for chunk in expanded] == [
+        "Abstract",
+        "Introduction",
+        "2.2 Pre-training Data",
+        "2.3 Mid-Training",
+    ]
+    assert all("当前仅处理其中的" in chunk["translation_scope"] for chunk in expanded)
+
+
 def test_stitch_chunked_pdf_article_combines_sections_naturally() -> None:
     item = ResearchItem(
         source="arxiv",
