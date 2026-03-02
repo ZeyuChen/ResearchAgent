@@ -245,6 +245,13 @@ def test_translation_looks_usable_rejects_missing_reference_commands() -> None:
     assert not LatexTranslationService._translation_looks_usable(original, translated, False)
 
 
+def test_cli_output_has_enough_chinese_rejects_english_only_rewrite() -> None:
+    source = "A" * 5000
+    translated = "This is still an English rewrite, not a Chinese translation."
+
+    assert not LatexTranslationService._cli_output_has_enough_chinese(source, translated, is_root=False)
+
+
 def test_compiler_requests_rerun_detects_cross_reference_warnings() -> None:
     log_text = "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right."
 

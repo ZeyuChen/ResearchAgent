@@ -485,7 +485,8 @@ class LatexTranslationService:
             "4. 必须逐字保留所有交叉引用和引用命令：`\\label`、`\\ref`、`\\eqref`、`\\pageref`、`\\autoref`、`\\cref`、`\\Cref`、`\\hyperref`、`\\cite`、`\\citet`、`\\citep`、`\\nocite`。\n"
             "5. 不要翻译 bibliography、thebibliography 或引用条目本身。\n"
             "6. 对专业术语如 Transformer、MoE、RLHF、Agent、token、benchmark、prompt、inference、alignment 优先保留英文或中英并列。\n"
-            "7. 不要输出整篇解释，只需完成编辑，然后用一句话说明是否已完成当前文件翻译。\n"
+            "7. 严禁把英文正文改写成更短的英文摘要；核心正文必须翻译成中文。如果某一小段无法安全翻译，保留该小段原文，不要把整节改写成英文总结。\n"
+            "8. 不要输出整篇解释，只需完成编辑，然后用一句话说明是否已完成当前文件翻译。\n"
         )
 
     @staticmethod
@@ -532,7 +533,11 @@ class LatexTranslationService:
             )
             last_returncode = int(result.get("returncode", 0))
             updated_text = tex_path.read_text(encoding="utf-8", errors="ignore")
-            if self._translation_looks_usable(source_text, updated_text, is_root):
+            if self._translation_looks_usable(source_text, updated_text, is_root) and self._cli_output_has_enough_chinese(
+                source_text,
+                updated_text,
+                is_root=is_root,
+            ):
                 translated = updated_text != source_text
                 warning = ""
                 if last_returncode != 0:
@@ -544,7 +549,7 @@ class LatexTranslationService:
                 }
 
             LOGGER.warning(
-                "Gemini CLI produced unusable output for %s on attempt %s; reverting and retrying",
+                "Gemini CLI produced unusable or insufficiently translated output for %s on attempt %s; reverting and retrying",
                 rel_path.as_posix(),
                 attempt,
             )
@@ -1093,6 +1098,24 @@ class LatexTranslationService:
         if cleaned.startswith("Here is") and "\\documentclass" in cleaned:
             cleaned = cleaned[cleaned.find("\\documentclass") :]
         return cleaned
+
+    @staticmethod
+    def _cli_output_has_enough_chinese(source_text: str, translated_text: str, *, is_root: bool) -> bool:
+        original_ascii = sum(1 for ch in source_text if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+        translated_cjk = sum(1 for ch in translated_text if "\u4e00" <= ch <= "\u9fff")
+        if original_ascii < 180:
+            return True
+        if translated_cjk <= 0:
+            return False
+        if is_root:
+            return translated_cjk >= 8
+        if original_ascii >= 8000:
+            return translated_cjk >= 120
+        if original_ascii >= 3000:
+            return translated_cjk >= 40
+        if original_ascii >= 1000:
+            return translated_cjk >= 12
+        return True
 
     @staticmethod
     def _protected_tokens_intact(translated: str, replacements: dict[str, str]) -> bool:
