@@ -66,14 +66,22 @@ OPTIONAL_PACKAGE_TFM_PROBES = {
 }
 CONFLICTING_CJK_PACKAGES = {"CJKutf8", "CJK"}
 FRAGILE_ENVIRONMENT_PATTERNS = (
-    re.compile(r"\\begin{table\*}.*?\\end{table\*}", re.DOTALL),
-    re.compile(r"\\begin{table}.*?\\end{table}", re.DOTALL),
-    re.compile(r"\\begin{figure\*}.*?\\end{figure\*}", re.DOTALL),
-    re.compile(r"\\begin{figure}.*?\\end{figure}", re.DOTALL),
     re.compile(r"\\begin{longtable}.*?\\end{longtable}", re.DOTALL),
     re.compile(r"\\begin{tabularx}.*?\\end{tabularx}", re.DOTALL),
     re.compile(r"\\begin{tabular\*}.*?\\end{tabular\*}", re.DOTALL),
     re.compile(r"\\begin{tabular}.*?\\end{tabular}", re.DOTALL),
+    re.compile(r"\\begin{array}.*?\\end{array}", re.DOTALL),
+    re.compile(r"\\begin{tikzpicture}.*?\\end{tikzpicture}", re.DOTALL),
+    re.compile(r"\\begin{algorithmic}.*?\\end{algorithmic}", re.DOTALL),
+    re.compile(r"\\begin{minted}.*?\\end{minted}", re.DOTALL),
+    re.compile(r"\\begin{lstlisting}.*?\\end{lstlisting}", re.DOTALL),
+    re.compile(r"\\begin{verbatim\*?}.*?\\end{verbatim\*?}", re.DOTALL),
+)
+STRICT_PRESERVE_COMMAND_PATTERNS = (
+    ("label", re.compile(r"\\label(?:\[[^\]]*\])?{")),
+    ("ref", re.compile(r"\\(?:ref|eqref|pageref|autoref|cref|Cref|nameref)\*?(?:\[[^\]]*\])?{")),
+    ("hyperref", re.compile(r"\\hyperref(?:\[[^\]]*\])?{")),
+    ("cite", re.compile(r"\\(?:[Cc]ite[a-zA-Z*]*|nocite)\b")),
 )
 CHINESE_SUPPORT_BLOCK = r"""
 % ResearchAgent Chinese translation support begin
@@ -289,7 +297,7 @@ class LatexTranslationService:
             except Exception as exc:
                 LOGGER.warning("Whole-file TeX translation failed for %s: %s; retrying in chunks", tex_path.name, exc)
 
-        translated, usage, changed = self._translate_tex_in_chunks(protected_original, tex_path)
+        translated, usage, changed = self._translate_tex_in_chunks(protected_original, tex_path, is_root=is_root)
         if not self._protected_tokens_intact(translated, protected_blocks):
             LOGGER.warning("Chunked TeX output modified protected blocks for %s; keeping original file", tex_path.name)
             return stripped_original, usage, stripped_original != original
@@ -318,12 +326,14 @@ class LatexTranslationService:
         return (
             "你将收到一个完整的 LaTeX 源文件。请把其中的人类可读英文内容忠实翻译成中文，同时确保输出仍然是可编译的 LaTeX 文件。\n"
             "硬性要求：\n"
-            "1. 只翻译自然语言内容：标题、摘要、正文、图注、表格中的文字、列表项、章节标题。\n"
-            "2. 保持所有 LaTeX 命令、宏名、环境名、label/ref/cite/eqref、文件路径、图像路径、BibTeX key、数学公式结构原样。\n"
-            "3. 对 LLM/ML 专业术语不要过度翻译，常见术语如 Transformer、MoE、RLHF、Agent、token、benchmark、prompt、inference、alignment 可以保留英文或中英并列。\n"
-            "4. Reference / Bibliography 章节、thebibliography 环境、\\bibliography 与 \\bibliographystyle 保持原样，不要翻译引用条目。\n"
-            "5. 如果某一段内容不确定如何安全翻译，保留原文，不要冒险破坏编译。\n"
-            "6. 输出必须只包含完整的 LaTeX 文件内容，不要加解释，不要加代码块。\n\n"
+            "1. 翻译所有人类可读文本：标题、摘要、正文、图注、表格标题、脚注、列表项、章节标题、作者单位说明。\n"
+            "2. 保持所有 LaTeX 命令、宏名、环境名、数学公式、文件路径、图像路径、BibTeX key 原样，不要改动任何控制序列。\n"
+            "3. 必须完整保留并原样输出所有交叉引用与引用命令，包括 \\label、\\ref、\\eqref、\\pageref、\\autoref、\\cref、\\Cref、\\hyperref、\\cite、\\citet、\\citep、\\nocite。\n"
+            "4. 如果输入中出现 RAKEEPBLOCKTOKENxxxx 这样的占位符，必须逐字原样保留，并且每个占位符只能出现一次，绝不能翻译、删除、拆分或复制。\n"
+            "5. Reference / Bibliography 章节、thebibliography 环境、\\bibliography 与 \\bibliographystyle 保持原样，不要翻译引用条目。\n"
+            "6. 对 LLM/ML 专业术语不要过度翻译，常见术语如 Transformer、MoE、RLHF、Agent、token、benchmark、prompt、inference、alignment 可以保留英文或中英并列。\n"
+            "7. 如果某一段内容不确定如何安全翻译，保留原文，不要冒险破坏编译；但不要省略任何已有文本。\n"
+            "8. 输出必须只包含完整的 LaTeX 文件内容，不要加解释，不要加代码块。\n\n"
             f"文件：{tex_path.name}\n"
             f"{role_line}\n"
             f"{fragment_line}\n\n"
@@ -372,7 +382,7 @@ class LatexTranslationService:
             raise last_error
         raise RuntimeError("Gemini TeX translation failed without an explicit error")
 
-    def _translate_tex_in_chunks(self, original: str, tex_path: Path) -> tuple[str, dict, bool]:
+    def _translate_tex_in_chunks(self, original: str, tex_path: Path, *, is_root: bool) -> tuple[str, dict, bool]:
         chunks = self._split_tex_into_chunks(original)
         translated_chunks: list[str] = []
         usage_total = self.llm_processor._empty_usage()
@@ -380,52 +390,94 @@ class LatexTranslationService:
 
         for index, chunk in enumerate(chunks, start=1):
             fragment_label = f"{index}/{len(chunks)}"
-            try:
-                translated_chunk, usage = self._translate_with_retries(
-                    chunk,
-                    tex_path,
-                    is_root=False,
-                    is_fragment=True,
-                    max_output_tokens=4096,
-                    fragment_label=fragment_label,
-                )
-                usage_total = self.llm_processor.merge_usage(usage_total, usage)
-                if self._translation_looks_usable(chunk, translated_chunk, False):
-                    translated_chunks.append(translated_chunk)
-                    changed = changed or translated_chunk != chunk
-                    continue
-                LOGGER.warning(
-                    "Translated TeX fragment looks unsafe for %s chunk %s; keeping original fragment",
-                    tex_path.name,
-                    fragment_label,
-                )
-            except Exception as exc:
-                LOGGER.warning(
-                    "Gemini TeX fragment translation failed for %s chunk %s: %s; keeping original fragment",
-                    tex_path.name,
-                    fragment_label,
-                    exc,
-                )
-            translated_chunks.append(chunk)
+            translated_chunk, usage, chunk_changed = self._translate_tex_fragment(
+                chunk,
+                tex_path,
+                is_root=is_root,
+                fragment_label=fragment_label,
+            )
+            usage_total = self.llm_processor.merge_usage(usage_total, usage)
+            translated_chunks.append(translated_chunk)
+            changed = changed or chunk_changed
 
         return "".join(translated_chunks), usage_total, changed
 
+    def _translate_tex_fragment(
+        self,
+        chunk: str,
+        tex_path: Path,
+        *,
+        is_root: bool,
+        fragment_label: str,
+        depth: int = 0,
+    ) -> tuple[str, dict, bool]:
+        usage_total = self.llm_processor._empty_usage()
+        try:
+            translated_chunk, usage = self._translate_with_retries(
+                chunk,
+                tex_path,
+                is_root=is_root,
+                is_fragment=True,
+                max_output_tokens=4096,
+                fragment_label=fragment_label,
+            )
+            usage_total = self.llm_processor.merge_usage(usage_total, usage)
+            if self._translation_looks_usable(chunk, translated_chunk, False):
+                return translated_chunk, usage_total, translated_chunk != chunk
+            LOGGER.warning(
+                "Translated TeX fragment looks unsafe for %s chunk %s; retrying with finer split",
+                tex_path.name,
+                fragment_label,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "Gemini TeX fragment translation failed for %s chunk %s: %s; retrying with finer split",
+                tex_path.name,
+                fragment_label,
+                exc,
+            )
+
+        if depth >= 2 or len(chunk) <= 2400:
+            return chunk, usage_total, False
+
+        subchunks = self._split_tex_into_chunks(chunk, target_chars=max(2400, min(TARGET_TEX_CHUNK_CHARS, len(chunk) // 2)))
+        if len(subchunks) <= 1:
+            subchunks = self._bisect_tex_fragment(chunk)
+        if len(subchunks) <= 1:
+            return chunk, usage_total, False
+
+        translated_parts: list[str] = []
+        changed = False
+        for index, subchunk in enumerate(subchunks, start=1):
+            translated_part, part_usage, part_changed = self._translate_tex_fragment(
+                subchunk,
+                tex_path,
+                is_root=is_root,
+                fragment_label=f"{fragment_label}.{index}/{len(subchunks)}",
+                depth=depth + 1,
+            )
+            usage_total = self.llm_processor.merge_usage(usage_total, part_usage)
+            translated_parts.append(translated_part)
+            changed = changed or part_changed
+
+        return "".join(translated_parts), usage_total, changed
+
     @staticmethod
-    def _split_tex_into_chunks(source_text: str) -> list[str]:
-        if len(source_text) <= TARGET_TEX_CHUNK_CHARS:
+    def _split_tex_into_chunks(source_text: str, target_chars: int = TARGET_TEX_CHUNK_CHARS) -> list[str]:
+        if len(source_text) <= target_chars:
             return [source_text]
 
         chunks: list[str] = []
         current_lines: list[str] = []
         current_size = 0
-        hard_limit = int(TARGET_TEX_CHUNK_CHARS * 1.3)
+        hard_limit = int(target_chars * 1.3)
 
         for line in source_text.splitlines(keepends=True):
             line_size = len(line)
             is_boundary = bool(TRANSLATION_BOUNDARY_RE.match(line))
             should_flush = False
 
-            if current_lines and is_boundary and current_size >= TARGET_TEX_CHUNK_CHARS // 2:
+            if current_lines and is_boundary and current_size >= target_chars // 2:
                 should_flush = True
             elif current_lines and current_size + line_size > hard_limit:
                 should_flush = True
@@ -444,6 +496,16 @@ class LatexTranslationService:
         return [chunk for chunk in chunks if chunk]
 
     @staticmethod
+    def _bisect_tex_fragment(source_text: str) -> list[str]:
+        midpoint = len(source_text) // 2
+        split_index = source_text.rfind("\n", 0, midpoint)
+        if split_index == -1:
+            split_index = source_text.find("\n", midpoint)
+        if split_index == -1:
+            return [source_text]
+        return [source_text[: split_index + 1], source_text[split_index + 1 :]]
+
+    @staticmethod
     def _protect_fragile_latex(source_text: str) -> tuple[str, dict[str, str]]:
         protected = source_text
         replacements: dict[str, str] = {}
@@ -459,7 +521,26 @@ class LatexTranslationService:
                 protected = f"{protected[:match.start()]}{token}{protected[match.end():]}"
                 counter += 1
 
-        for command_name in ("footnote",):
+        for command_name in (
+            "label",
+            "ref",
+            "eqref",
+            "pageref",
+            "autoref",
+            "cref",
+            "Cref",
+            "nameref",
+            "hyperref",
+            "cite",
+            "citet",
+            "citep",
+            "citealp",
+            "citealt",
+            "citeauthor",
+            "citeyear",
+            "citeyearpar",
+            "nocite",
+        ):
             protected, replacements, counter = LatexTranslationService._protect_command_arguments(
                 protected,
                 command_name,
@@ -617,6 +698,11 @@ class LatexTranslationService:
         for env_name, count in original_env_counts.items():
             if translated_env_counts.get(env_name, 0) < count:
                 return False
+        original_preserve_counts = LatexTranslationService._count_strict_preserve_commands(original)
+        translated_preserve_counts = LatexTranslationService._count_strict_preserve_commands(translated)
+        for name, count in original_preserve_counts.items():
+            if translated_preserve_counts.get(name, 0) != count:
+                return False
         if translated.count("\\item") < original.count("\\item"):
             return False
         if len(original) >= 800 and len(translated) < max(320, int(len(original) * 0.36)):
@@ -624,6 +710,15 @@ class LatexTranslationService:
         if len(translated) > max(int(len(original) * 1.8), len(original) + 2400):
             return False
         return True
+
+    @staticmethod
+    def _count_strict_preserve_commands(source_text: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for name, pattern in STRICT_PRESERVE_COMMAND_PATTERNS:
+            count = len(pattern.findall(source_text))
+            if count:
+                counts[name] = count
+        return counts
 
     @staticmethod
     def _count_section_commands(source_text: str) -> dict[str, int]:
@@ -907,8 +1002,13 @@ class LatexTranslationService:
         bibinputs = env.get("BIBINPUTS", "")
         env["TEXINPUTS"] = f"{project_root}{os.pathsep}{texinputs}"
         env["BIBINPUTS"] = f"{project_root}{os.pathsep}{bibinputs}"
+        followup_passes = 0
+        rerun_budget = 2
+        last_pass_log = ""
+        pass_number = 0
 
-        for _ in range(2):
+        while True:
+            pass_number += 1
             result = subprocess.run(
                 [
                     compiler_path,
@@ -923,29 +1023,57 @@ class LatexTranslationService:
                 capture_output=True,
                 text=True,
             )
-            log_parts.append(result.stdout)
-            log_parts.append(result.stderr)
+            last_pass_log = "\n".join(part for part in (result.stdout, result.stderr) if part)
+            log_parts.append(f"== {compiler_name} pass {pass_number} ==\n{last_pass_log}".rstrip())
             if result.returncode != 0:
                 return False, "\n".join(part for part in log_parts if part), result.stderr.strip() or result.stdout.strip()
 
-            if self._needs_bibtex(root_tex, build_dir) and self.bibtex_path:
-                bib_result = subprocess.run(
-                    [self.bibtex_path, root_tex.stem],
-                    cwd=build_dir,
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                )
-                log_parts.append(bib_result.stdout)
-                log_parts.append(bib_result.stderr)
-                if bib_result.returncode != 0:
-                    return False, "\n".join(part for part in log_parts if part), bib_result.stderr.strip() or bib_result.stdout.strip()
+            if pass_number == 1:
+                if self._needs_bibtex(root_tex, build_dir) and self.bibtex_path:
+                    bib_result = subprocess.run(
+                        [self.bibtex_path, root_tex.stem],
+                        cwd=build_dir,
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                    )
+                    bib_log = "\n".join(part for part in (bib_result.stdout, bib_result.stderr) if part)
+                    log_parts.append(f"== bibtex ==\n{bib_log}".rstrip())
+                    if bib_result.returncode != 0:
+                        return False, "\n".join(part for part in log_parts if part), bib_result.stderr.strip() or bib_result.stdout.strip()
+                    followup_passes = 2
+                else:
+                    followup_passes = 1
+                continue
+
+            if followup_passes > 0:
+                followup_passes -= 1
+                if followup_passes > 0:
+                    continue
+
+            if rerun_budget > 0 and self._compiler_requests_rerun(last_pass_log):
+                rerun_budget -= 1
+                continue
+            break
 
         pdf_path = build_dir / f"{root_tex.stem}.pdf"
         if not pdf_path.exists():
             return False, "\n".join(part for part in log_parts if part), "Compiled PDF was not produced"
 
         return True, "\n".join(part for part in log_parts if part), ""
+
+    @staticmethod
+    def _compiler_requests_rerun(log_text: str) -> bool:
+        lowered = log_text.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "rerun to get cross-references right",
+                "rerun to get citations correct",
+                "citation(s) may have changed",
+                "label(s) may have changed",
+            )
+        )
 
     def _needs_bibtex(self, root_tex: Path, build_dir: Path) -> bool:
         aux_path = build_dir / f"{root_tex.stem}.aux"

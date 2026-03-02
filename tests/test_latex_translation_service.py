@@ -70,6 +70,15 @@ def test_split_tex_into_chunks_keeps_section_boundaries() -> None:
     assert any(chunk.startswith("\\section{Method}") for chunk in chunks[1:])
 
 
+def test_bisect_tex_fragment_splits_on_newline_near_middle() -> None:
+    source = "line1\nline2\nline3\nline4\n"
+
+    chunks = LatexTranslationService._bisect_tex_fragment(source)
+
+    assert len(chunks) == 2
+    assert "".join(chunks) == source
+
+
 def test_strip_tex_comments_removes_full_and_trailing_comments() -> None:
     source = (
         "% full-line comment\n"
@@ -138,19 +147,46 @@ def test_sanitize_table_section_commands_removes_section_inside_tabular() -> Non
     assert "\\begin{tabular}{ll}" in sanitized
 
 
-def test_protect_fragile_latex_shields_table_and_footnote() -> None:
+def test_protect_fragile_latex_shields_inner_structures_but_keeps_captions_and_footnotes() -> None:
     source = (
         "正文段落。\n"
         "\\footnote{A note that should stay stable.}\n"
-        "\\begin{table}\nA & B \\\\\n\\end{table}\n"
+        "\\begin{figure}\n"
+        "\\caption{Overview figure.}\n"
+        "\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n"
+        "\\end{figure}\n"
+        "\\begin{table}\n"
+        "\\caption{Result table.}\n"
+        "\\begin{tabular}{ll}\nA & B \\\\\n\\end{tabular}\n"
+        "\\end{table}\n"
     )
 
     protected, replacements = LatexTranslationService._protect_fragile_latex(source)
     restored = LatexTranslationService._restore_protected_latex(protected, replacements)
 
     assert "RAKEEPBLOCKTOKEN" in protected
-    assert "\\footnote{" not in protected
-    assert "\\begin{table}" not in protected
+    assert "\\footnote{" in protected
+    assert "\\caption{Overview figure.}" in protected
+    assert "\\begin{figure}" in protected
+    assert "\\begin{table}" in protected
+    assert "\\begin{tikzpicture}" not in protected
+    assert "\\begin{tabular}" not in protected
+    assert restored == source
+
+
+def test_protect_fragile_latex_shields_reference_commands() -> None:
+    source = (
+        "See Section~\\ref{sec:method}.\n"
+        "As shown in \\hyperref[fig:pipeline]{Pipeline Figure}.\n"
+        "We follow \\citep{foo2024bar}.\n"
+    )
+
+    protected, replacements = LatexTranslationService._protect_fragile_latex(source)
+    restored = LatexTranslationService._restore_protected_latex(protected, replacements)
+
+    assert "\\ref{" not in protected
+    assert "\\hyperref[" not in protected
+    assert "\\citep{" not in protected
     assert restored == source
 
 
@@ -188,3 +224,26 @@ def test_translation_looks_usable_rejects_truncated_structure() -> None:
     )
 
     assert not LatexTranslationService._translation_looks_usable(original, translated, False)
+
+
+def test_translation_looks_usable_rejects_missing_reference_commands() -> None:
+    original = (
+        "\\section{Intro}\n"
+        "See Section~\\ref{sec:method} and Figure~\\hyperref[fig:pipeline]{Pipeline}.\n"
+        "We follow \\cite{foo2024bar}.\n"
+        "\\label{sec:intro}\n"
+    )
+    translated = (
+        "\\section{引言}\n"
+        "参见方法部分与图示。\n"
+        "我们遵循先前工作。\n"
+        "\\label{sec:intro}\n"
+    )
+
+    assert not LatexTranslationService._translation_looks_usable(original, translated, False)
+
+
+def test_compiler_requests_rerun_detects_cross_reference_warnings() -> None:
+    log_text = "LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right."
+
+    assert LatexTranslationService._compiler_requests_rerun(log_text)
